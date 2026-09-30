@@ -1,18 +1,19 @@
 import { startHealthServer } from "./health";
 import { Scheduler } from "./scheduler";
-import { gamePlayers } from "./tasks/game-players";
-import { leaderboards } from "./tasks/leaderboards";
+import { cubecraft } from "./tasks/cubecraft";
 import { serverStatus } from "./tasks/server-status";
 
 // Scheduling lives here because Railway cron cannot run more often than every 5 minutes.
 
-// Checked at boot rather than on the first run, which could be 15 minutes away.
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL is not set");
-  process.exit(1);
+// Checked at boot rather than on the first run, which could be minutes away.
+for (const name of ["DATABASE_URL", "MC_USERNAME"]) {
+  if (!process.env[name]) {
+    console.error(`${name} is not set`);
+    process.exit(1);
+  }
 }
 
-const scheduler = new Scheduler([leaderboards, serverStatus, gamePlayers]);
+const scheduler = new Scheduler([cubecraft, serverStatus]);
 scheduler.start();
 
 const health = startHealthServer(scheduler);

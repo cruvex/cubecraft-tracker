@@ -1,42 +1,53 @@
 /**
- * Posts a run summary to a Discord webhook. Sends nothing when
- * DISCORD_WEBHOOK_URL is unset, or when the run changed nothing.
+ * Posts to a Discord webhook when the set of problems changes: when something
+ * starts failing, when what is failing changes, and once when everything is
+ * back to normal. Runs every 5 minutes save boards almost every time, so a
+ * post per saved board would be noise. Sends nothing when DISCORD_WEBHOOK_URL
+ * is unset.
  */
 const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
 
-/** Pinged on any run that did not do everything it was supposed to. */
+/** Pinged whenever there is a new problem. */
 const ownerId = "255361968037167105";
 
 const green = 0x57f287;
 const yellow = 0xfee75c;
 const red = 0xed4245;
 
-export type GameReport = { game: string } & (
-  | { status: "saved"; lastUpdated: Date }
+export type BoardReport = { game: string } & (
+  | { status: "saved" }
   | { status: "unchanged" }
-  | { status: "partial"; rows: number; expected: number }
+  | { status: "partial"; rows: number }
   | { status: "unresolved"; resolved: number; total: number }
-  | { status: "missing" }
+  | { status: "failed"; error: string }
 );
 
-type ReportedGame = Exclude<GameReport, { status: "unchanged" }>;
+type Problem = Exclude<BoardReport, { status: "saved" | "unchanged" }>;
 
 export type RunReport =
-  | { kind: "run"; games: GameReport[] }
-  | { kind: "disabled" }
+  | { kind: "run"; boards: BoardReport[]; unmappedGames: string[] }
   | { kind: "failed"; error: unknown };
 
+// What the last post said was wrong; empty while everything is fine. Kept in
+// memory, so a restart with a problem still ongoing posts it once more.
+let lastProblems = "";
+
 export async function sendReport(report: RunReport) {
+  const problems = problemKey(report);
+  if (problems === lastProblems) return;
+
+  const recovered = problems === "";
+  lastProblems = problems;
+
   if (!webhookUrl) return;
 
-  const embed = buildEmbed(report);
-  if (!embed) return;
+  const embed = recovered ? recoveredEmbed() : problemEmbed(report);
 
   // Only a mention in the message body notifies: one inside an embed renders as
   // a link and nothing else.
-  const mention = needsAttention(report)
-    ? { content: `<@${ownerId}>`, allowed_mentions: { users: [ownerId] } }
-    : {};
+  const mention = recovered
+    ? {}
+    : { content: `<@${ownerId}>`, allowed_mentions: { users: [ownerId] } };
 
   try {
     const res = await fetch(webhookUrl, {
@@ -55,102 +66,85 @@ export async function sendReport(report: RunReport) {
   }
 }
 
-/** Anything short of every tracked board being up to date. */
-function needsAttention(report: RunReport): boolean {
-  if (report.kind !== "run") return true;
+/**
+ * Identifies the problems without their details, so a board that keeps failing
+ * with a slightly different message does not post every run.
+ */
+function problemKey(report: RunReport): string {
+  if (report.kind === "failed") return "run failed";
 
-  return report.games.some(
-    (g) => g.status !== "saved" && g.status !== "unchanged",
-  );
+  return [
+    ...problemsOf(report.boards).map((b) => `${b.game}:${b.status}`),
+    ...report.unmappedGames.map((name) => `unmapped:${name}`),
+  ]
+    .sort()
+    .join(",");
 }
 
-/** Returns null for a run not worth posting. */
-function buildEmbed(report: RunReport) {
+function problemsOf(boards: BoardReport[]): Problem[] {
+  return boards.filter((b): b is Problem => b.status !== "saved" && b.status !== "unchanged");
+}
+
+function recoveredEmbed() {
+  return {
+    title: "Back to normal",
+    description: "Every leaderboard and player count is being read again.",
+    color: green,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function problemEmbed(report: RunReport) {
   if (report.kind === "failed") {
     return {
-      title: "The update run failed",
-      description: `Nothing was updated this run. It will be retried on the next one.\n${codeBlock(formatError(report.error))}`,
+      title: "The CubeCraft scrape failed",
+      description: `Nothing was read this run. It is retried every 5 minutes, and this is posted again only once it changes.\n${codeBlock(formatError(report.error))}`,
       color: red,
       timestamp: new Date().toISOString(),
     };
   }
 
-  if (report.kind === "disabled") {
-    return {
-      title: "Leaderboards are turned off",
-      description:
-        "Cubepanion has leaderboards disabled right now, so there is nothing to update.",
-      color: yellow,
-      timestamp: new Date().toISOString(),
-    };
+  const problems = problemsOf(report.boards);
+  const fine = report.boards.length - problems.length;
+
+  const fields = problems.map((p) => ({ name: `⚠️ ${p.game}`, value: value(p), inline: false }));
+
+  if (report.unmappedGames.length > 0) {
+    fields.push({
+      name: "New in the Games menu",
+      value: `${report.unmappedGames.join(", ")}: not tracked until added to \`games\` in scraper/src/cubecraft/scrape.ts`,
+      inline: false,
+    });
   }
 
-  const changed = report.games.filter(
-    (g): g is ReportedGame => g.status !== "unchanged",
-  );
-
-  if (changed.length === 0) return null;
-
-  const saved = changed.filter((g) => g.status === "saved");
-  const problems = changed.filter((g) => g.status !== "saved");
-
   return {
-    title: title(saved, problems),
-    color: problems.length > 0 ? (saved.length > 0 ? yellow : red) : green,
-    fields: [...saved, ...problems].map(field),
+    title:
+      problems.length === 0
+        ? "Untracked games in the Games menu"
+        : `${problems.length} leaderboard${problems.length === 1 ? "" : "s"} not updating`,
     description:
       problems.length > 0
-        ? "Skipped boards are picked up again on the next run."
+        ? `The other ${fine} are fine. Skipped boards are tried again every 5 minutes.`
         : undefined,
+    color: fine > 0 ? yellow : red,
+    fields,
     timestamp: new Date().toISOString(),
   };
 }
 
-function title(saved: ReportedGame[], problems: ReportedGame[]): string {
-  if (saved.length === 0) {
-    return problems.length === 1
-      ? `${problems[0]!.game} could not be updated`
-      : `${problems.length} leaderboards could not be updated`;
-  }
-
-  const updated = `${saved.length} Leaderboard${saved.length === 1 ? "" : "s"} updated`;
-
-  // The title is all a notification shows, so it cannot say only the good half.
-  return problems.length > 0 ? `${updated}, ${problems.length} skipped` : updated;
-}
-
-function field(g: ReportedGame) {
-  const name = g.status === "saved" ? g.game : `⚠️ ${g.game}`;
-  return { name, value: value(g), inline: false };
-}
-
-function value(g: ReportedGame): string {
-  switch (g.status) {
-    case "saved":
-      return `Board updated ${full(g.lastUpdated)} | ${relative(g.lastUpdated)}`;
+function value(p: Problem): string {
+  switch (p.status) {
     case "partial":
-      return `Skipped: Cubepanion returned an incomplete leaderboard (${count(g.rows)} of ${count(g.expected)} players)`;
+      return `Skipped: the leaderboard stopped loading after ${count(p.rows)} players`;
     case "unresolved":
-      return `Skipped: ${count(g.total - g.resolved)} of ${count(g.total)} names could not be matched to a Minecraft account`;
-    case "missing":
-      return `Skipped: Cubepanion did not return this leaderboard`;
+      return `Skipped: ${count(p.total - p.resolved)} of ${count(p.total)} names could not be matched to a Minecraft account`;
+    case "failed":
+      return `Skipped: ${p.error}`;
   }
 }
 
 function count(n: number): string {
   return n.toLocaleString("en-US");
-}
-
-function full(date: Date): string {
-  return `<t:${seconds(date)}:F>`;
-}
-
-function relative(date: Date): string {
-  return `<t:${seconds(date)}:R>`;
-}
-
-function seconds(date: Date): number {
-  return Math.floor(date.getTime() / 1000);
 }
 
 function formatError(error: unknown): string {

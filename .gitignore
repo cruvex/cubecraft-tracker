@@ -3,3 +3,6 @@ node_modules
 .idea
 .claude
 dist
+
+# Microsoft token cache from local scraper runs
+.auth/
