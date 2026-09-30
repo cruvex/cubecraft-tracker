@@ -152,7 +152,8 @@ function clamp(value: number, min: number, max: number) {
 }
 
 async function handleGames() {
-    const [games, lastSnapshots] = await Promise.all([fetchGames(), getLastSnapshotTimes()]);
+    const games = await fetchGames();
+    const lastSnapshots = await getLastSnapshotTimes(games.map((g) => g.id));
     return jsonResponse(
         games
             .filter((g) => lastSnapshots.has(g.id))
