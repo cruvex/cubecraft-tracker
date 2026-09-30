@@ -54,12 +54,12 @@ export async function resolvePlayerUUIDs(
 
 export type ScoreChange = {
   ign: string;
-  // Null for a player with no earlier score on this board.
+  // Null for a player who was not on the previous read.
   from: number | null;
   to: number;
 };
 
-// Extends each player's latest period to `readAt` if the score is unchanged, else starts a new one.
+// Extends a player's period to `readAt` if they were on the previous read with the same score and position, else starts a new one.
 export async function savePlayerScores(
   gameId: number,
   readAt: Date,
@@ -78,44 +78,48 @@ export async function savePlayerScores(
   }
 
   const changes = await Bun.sql.begin(async (tx) => {
-    const latest = await tx`
-      SELECT DISTINCT ON (player) player::text AS player, score, last_seen
+    const previous: PreviousReading[] = await tx`
+      SELECT player::text AS player, score, position, last_seen
       FROM player_scores
-      WHERE game_id = ${gameId} AND player IN ${tx([...board.keys()])}
-      ORDER BY player, first_seen DESC
+      WHERE game_id = ${gameId}
+        AND last_seen = (SELECT MAX(last_seen) FROM player_scores WHERE game_id = ${gameId})
     `;
-    const latestByPlayer = new Map<string, { score: number; last_seen: Date }>(
-      latest.map((p: { player: string; score: number; last_seen: Date }) => [normalizeUuid(p.player), p]),
-    );
+
+    // This read, or a newer one, is already recorded: a re-run or an out-of-order import.
+    if (previous.length > 0 && previous[0]!.last_seen >= readAt) return [];
+
+    const previousByPlayer = new Map(previous.map((p) => [normalizeUuid(p.player), p]));
 
     const extended: string[] = [];
     const started: PlayerScoreRow[] = [];
     const changes: ScoreChange[] = [];
 
     for (const [player, row] of board) {
-      const current = latestByPlayer.get(player);
+      const prev = previousByPlayer.get(player);
 
-      // Already recorded by a newer read: a re-run or an out-of-order import.
-      if (current && current.last_seen >= readAt) continue;
-
-      if (current?.score === row.score) {
+      if (prev && prev.score === row.score && prev.position === row.position) {
         extended.push(player);
       } else {
-        started.push({ game_id: gameId, player, score: row.score, first_seen: readAt, last_seen: readAt });
-        changes.push({ ign: row.player, from: current?.score ?? null, to: row.score });
+        started.push({
+          game_id: gameId,
+          player,
+          score: row.score,
+          position: row.position,
+          first_seen: readAt,
+          last_seen: readAt,
+        });
+        changes.push({ ign: row.player, from: prev?.score ?? null, to: row.score });
       }
     }
 
+    // The subquery runs before the update, so it still finds the previous read.
     if (extended.length > 0) {
       await tx`
-        UPDATE player_scores p
+        UPDATE player_scores
         SET last_seen = ${readAt}
         WHERE game_id = ${gameId}
           AND player IN ${tx(extended)}
-          AND first_seen = (
-            SELECT MAX(first_seen) FROM player_scores
-            WHERE game_id = p.game_id AND player = p.player
-          )
+          AND last_seen = (SELECT MAX(last_seen) FROM player_scores WHERE game_id = ${gameId})
       `;
     }
 
@@ -247,7 +251,15 @@ type PlayerScoreRow = {
   game_id: number;
   player: string;
   score: number;
+  position: number;
   first_seen: Date;
+  last_seen: Date;
+};
+
+type PreviousReading = {
+  player: string;
+  score: number;
+  position: number;
   last_seen: Date;
 };
 
