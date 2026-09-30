@@ -52,66 +52,85 @@ export async function resolvePlayerUUIDs(
   return uuidMap;
 }
 
-/**
- * Whether `rows` (players already resolved to uuids) are exactly the latest
- * saved snapshot of the game: same players at the same positions with the same
- * scores. Such a board is not saved again.
- */
-export async function matchesLatestSnapshot(
+export type ScoreChange = {
+  ign: string;
+  // Null for a player with no earlier score on this board.
+  from: number | null;
+  to: number;
+};
+
+// Extends each player's latest period to `readAt` if the score is unchanged, else starts a new one.
+export async function savePlayerScores(
   gameId: number,
+  readAt: Date,
   rows: BoardRow[],
   uuidMap: Map<string, string>,
-): Promise<boolean> {
-  const latest = await Bun.sql`
-    SELECT position, player::text AS player, score
-    FROM leaderboard_rows
-    WHERE snapshot_id = (
-      SELECT id FROM leaderboard_snapshots
-      WHERE game_id = ${gameId}
-      ORDER BY timestamp DESC
-      LIMIT 1
-    )
-    ORDER BY position
-  `;
+): Promise<ScoreChange[]> {
+  // Two IGNs on one uuid would start two periods with the same key, so the higher-placed row wins.
+  const board = new Map<string, BoardRow>();
+  for (const row of rows) {
+    const player = normalizeUuid(uuidMap.get(row.player.toLowerCase())!);
+    if (board.has(player)) {
+      console.warn(`${row.player} resolves to the same uuid as ${board.get(player)!.player}; keeping the higher-placed row`);
+      continue;
+    }
+    board.set(player, row);
+  }
 
-  if (latest.length !== rows.length) return false;
-
-  return rows.every((row, i) => {
-    const saved = latest[i];
-    return (
-      saved.position === row.position &&
-      saved.score === row.score &&
-      normalizeUuid(saved.player) === normalizeUuid(uuidMap.get(row.player.toLowerCase())!)
-    );
-  });
-}
-
-export async function saveSnapshot(
-  gameId: number,
-  timestamp: Date,
-  rows: BoardRow[],
-  uuidMap: Map<string, string>,
-) {
-  const snapshotId = Bun.randomUUIDv7();
-
-  await Bun.sql.begin(async (tx) => {
-    await tx`
-      INSERT INTO leaderboard_snapshots (id, game_id, timestamp)
-      VALUES (${snapshotId}, ${gameId}, ${timestamp})
+  const changes = await Bun.sql.begin(async (tx) => {
+    const latest = await tx`
+      SELECT DISTINCT ON (player) player::text AS player, score, last_seen
+      FROM player_scores
+      WHERE game_id = ${gameId} AND player IN ${tx([...board.keys()])}
+      ORDER BY player, first_seen DESC
     `;
+    const latestByPlayer = new Map<string, { score: number; last_seen: Date }>(
+      latest.map((p: { player: string; score: number; last_seen: Date }) => [normalizeUuid(p.player), p]),
+    );
 
-    const leaderboardRows = rows.map((row) => ({
-      id: Bun.randomUUIDv7(),
-      snapshot_id: snapshotId,
-      position: row.position,
-      player: uuidMap.get(row.player.toLowerCase())!,
-      score: row.score,
-    }));
+    const extended: string[] = [];
+    const started: PlayerScoreRow[] = [];
+    const changes: ScoreChange[] = [];
 
-    await tx`INSERT INTO leaderboard_rows ${tx(leaderboardRows)}`;
+    for (const [player, row] of board) {
+      const current = latestByPlayer.get(player);
+
+      // Already recorded by a newer read: a re-run or an out-of-order import.
+      if (current && current.last_seen >= readAt) continue;
+
+      if (current?.score === row.score) {
+        extended.push(player);
+      } else {
+        started.push({ game_id: gameId, player, score: row.score, first_seen: readAt, last_seen: readAt });
+        changes.push({ ign: row.player, from: current?.score ?? null, to: row.score });
+      }
+    }
+
+    if (extended.length > 0) {
+      await tx`
+        UPDATE player_scores p
+        SET last_seen = ${readAt}
+        WHERE game_id = ${gameId}
+          AND player IN ${tx(extended)}
+          AND first_seen = (
+            SELECT MAX(first_seen) FROM player_scores
+            WHERE game_id = p.game_id AND player = p.player
+          )
+      `;
+    }
+
+    if (started.length > 0) {
+      await tx`INSERT INTO player_scores ${tx(started)}`;
+    }
+
+    return changes;
   });
 
-  await savePlayerTextures(timestamp, rows, uuidMap);
+  if (changes.length > 0) {
+    await savePlayerTextures(readAt, [...board.values()], uuidMap);
+  }
+
+  return changes;
 }
 
 // The timestamp guard stops a re-run or out-of-order import overwriting a newer texture.
@@ -223,6 +242,14 @@ const PlayerProfileSchema = z.object({
 });
 
 type PlayerProfile = z.infer<typeof PlayerProfileSchema>;
+
+type PlayerScoreRow = {
+  game_id: number;
+  player: string;
+  score: number;
+  first_seen: Date;
+  last_seen: Date;
+};
 
 type PlayerTextureRow = {
   player_uuid: string;

@@ -1,5 +1,5 @@
 import { scrapeCubeCraft, type Board, type ScrapeResult } from "../cubecraft/scrape";
-import { matchesLatestSnapshot, resolvePlayerUUIDs, saveSnapshot } from "../leaderboard-store";
+import { resolvePlayerUUIDs, savePlayerScores } from "../leaderboard-store";
 import { sendReport, type BoardReport } from "../report";
 import type { Task } from "../scheduler";
 
@@ -59,16 +59,17 @@ async function saveBoard(board: Board, signal: AbortSignal): Promise<BoardReport
 
   const uuidMap = await resolvePlayerUUIDs(board.rows.map((row) => row.player), signal);
 
-  // leaderboard_rows.player is a uuid column, so an unresolved player cannot be stored at all.
+  // player_scores.player is a uuid column, so an unresolved player cannot be stored at all.
   const resolved = board.rows.filter((row) => uuidMap.has(row.player.toLowerCase())).length;
   if (resolved !== board.rows.length) {
     return { game, status: "unresolved", resolved, total: board.rows.length };
   }
 
-  if (await matchesLatestSnapshot(board.game.id, board.rows, uuidMap)) {
-    return { game, status: "unchanged" };
+  const changes = await savePlayerScores(board.game.id, board.readAt, board.rows, uuidMap);
+
+  for (const { ign, from, to } of changes) {
+    if (from !== null && to < from) console.warn(`[cubecraft] ${game}: ${ign} went down from ${from} to ${to}`);
   }
 
-  await saveSnapshot(board.game.id, board.readAt, board.rows, uuidMap);
-  return { game, status: "saved" };
+  return { game, status: changes.length > 0 ? "saved" : "unchanged" };
 }
