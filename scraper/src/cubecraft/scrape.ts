@@ -18,7 +18,6 @@ export const games: Game[] = [
   // Its Statistics screen has no Leaderboard entry.
   { menuName: "Skyblock", id: 7, leaderboard: false },
   { menuName: "Free For All", id: 1, leaderboard: true },
-  { menuName: "Mob Hunt", id: 15, leaderboard: true },
   { menuName: "SkyWars", id: 10, leaderboard: true },
   { menuName: "Pillars of Fortune", id: 8, leaderboard: true },
   { menuName: "Parkour", id: 2, leaderboard: true },
