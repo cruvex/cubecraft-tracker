@@ -1,33 +1,8 @@
+import { gameMatcher, type Game } from "../games";
 import { connect } from "./connection";
 import { openGamesMenu, readGameCounts, scrapeLeaderboard, type ScrapedRow, type Window } from "./menus";
 
-export type Game = {
-  // As the Games menu shows it, minus decorations like " -UPDATE!".
-  menuName: string;
-  // Cubepanion's game id, which is what game_id holds in every table.
-  id: number;
-  leaderboard: boolean;
-};
-
-// The Games menu has no ids, so this maps its names onto the ones the database
-// already uses. A game missing here still shows up, as an unmapped count.
-export const games: Game[] = [
-  { menuName: "EggWars", id: 11, leaderboard: true },
-  { menuName: "Lucky Islands", id: 12, leaderboard: true },
-  { menuName: "BedWars", id: 3, leaderboard: true },
-  // Its Statistics screen has no Leaderboard entry.
-  { menuName: "Skyblock", id: 7, leaderboard: false },
-  { menuName: "Free For All", id: 1, leaderboard: true },
-  { menuName: "SkyWars", id: 10, leaderboard: true },
-  { menuName: "Pillars of Fortune", id: 8, leaderboard: true },
-  { menuName: "Parkour", id: 2, leaderboard: true },
-];
-
-// Match on the start: CubeCraft decorates names ("BedWars -UPDATE!").
-const matches = (game: Game) => (name: string) =>
-  name.toLowerCase().startsWith(game.menuName.toLowerCase());
-
-export type Board = { game: Game; readAt: Date } & (
+export type Board = { game: Game; readAt: Date; attempts: number } & (
   | { ok: true; rows: ScrapedRow[]; complete: boolean }
   | { ok: false; error: string }
 );
@@ -40,11 +15,14 @@ export type ScrapeResult = {
 };
 
 /**
- * One login: read every game's player count off the Games menu, then open each
- * game's leaderboard in turn. A board that fails is reported and the rest
- * carry on; only failing to log in or to open the Games menu throws.
+ * One login: read every game's player count off the Games menu, then open the
+ * leaderboard of each active game in turn. A board that fails is reported and
+ * the rest carry on; only failing to log in or to open the Games menu throws.
  */
-export async function scrapeCubeCraft(signal: AbortSignal): Promise<ScrapeResult> {
+export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promise<ScrapeResult> {
+  const gameOf = gameMatcher(games);
+  const isGame = (game: Game) => (name: string) => gameOf(name)?.id === game.id;
+
   const bot = await connect(signal);
 
   // Menu waits do not watch the signal, but they cannot outlive the connection.
@@ -59,9 +37,15 @@ export async function scrapeCubeCraft(signal: AbortSignal): Promise<ScrapeResult
     const unmappedGames: string[] = [];
 
     for (const { name, players } of readGameCounts(menu)) {
-      const game = games.find((g) => matches(g)(name));
-      if (game) counts.push({ gameId: game.id, players });
-      else unmappedGames.push(name);
+      const game = gameOf(name);
+
+      if (!game) {
+        unmappedGames.push(name);
+      } else if (counts.some((c) => c.gameId === game.id)) {
+        console.warn(`[cubecraft] "${name}" is another entry for ${game.displayName}; keeping the first count`);
+      } else {
+        counts.push({ gameId: game.id, players });
+      }
     }
 
     // Every board starts from the Games menu; the one read for the counts is
@@ -75,7 +59,7 @@ export async function scrapeCubeCraft(signal: AbortSignal): Promise<ScrapeResult
 
     const boards: Board[] = [];
 
-    for (const game of games.filter((g) => g.leaderboard)) {
+    for (const game of games.filter((g) => g.active)) {
       let board: Board | undefined;
 
       // One retry: a board that fails or stops early has so far always been a
@@ -83,13 +67,13 @@ export async function scrapeCubeCraft(signal: AbortSignal): Promise<ScrapeResult
       for (let attempt = 1; attempt <= 2; attempt++) {
         signal.throwIfAborted();
         try {
-          const { rows, complete } = await scrapeLeaderboard(bot, await gamesMenu(), matches(game));
-          board = { game, readAt: new Date(), ok: true, rows, complete };
+          const { rows, complete } = await scrapeLeaderboard(bot, await gamesMenu(), isGame(game));
+          board = { game, readAt: new Date(), attempts: attempt, ok: true, rows, complete };
           if (complete) break;
         } catch (err) {
-          board = { game, readAt: new Date(), ok: false, error: describe(err) };
+          board = { game, readAt: new Date(), attempts: attempt, ok: false, error: describe(err) };
         }
-        console.warn(`[cubecraft] ${game.menuName} attempt ${attempt} did not read cleanly`);
+        console.warn(`[cubecraft] ${game.displayName} attempt ${attempt} did not read cleanly`);
       }
 
       boards.push(board!);

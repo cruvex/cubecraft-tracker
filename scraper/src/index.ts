@@ -1,6 +1,7 @@
 import { startHealthServer } from "./health";
 import { Scheduler } from "./scheduler";
 import { cubecraft } from "./tasks/cubecraft";
+import { games } from "./tasks/games";
 import { serverStatus } from "./tasks/server-status";
 
 // Scheduling lives here because Railway cron cannot run more often than every 5 minutes.
@@ -13,7 +14,12 @@ for (const name of ["DATABASE_URL", "MC_USERNAME"]) {
   }
 }
 
-const scheduler = new Scheduler([cubecraft, serverStatus]);
+// The games table starts empty and the first scrape needs it; if Cubepanion is down, the next scheduled run retries.
+await games
+  .run({ firedAt: new Date(), signal: AbortSignal.timeout(games.timeoutMs) })
+  .catch((err) => console.error(`[games] first sync failed: ${err?.message ?? err}`));
+
+const scheduler = new Scheduler([cubecraft, games, serverStatus]);
 scheduler.start();
 
 const health = startHealthServer(scheduler);

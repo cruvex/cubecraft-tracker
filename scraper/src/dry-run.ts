@@ -5,9 +5,12 @@
  *   MC_USERNAME=... MC_AUTH_DIR=... bun src/dry-run.ts
  */
 import { scrapeCubeCraft } from "./cubecraft/scrape";
+import { fetchCubepanionGames } from "./games";
 
 const started = performance.now();
-const result = await scrapeCubeCraft(AbortSignal.timeout(4 * 60_000));
+// Straight from Cubepanion, as the database is not touched.
+const games = await fetchCubepanionGames(AbortSignal.timeout(30_000));
+const result = await scrapeCubeCraft(AbortSignal.timeout(4 * 60_000), games);
 const seconds = ((performance.now() - started) / 1000).toFixed(1);
 
 console.log(`\nPlayer counts at ${result.countsReadAt.toISOString()}:`);
@@ -16,7 +19,7 @@ if (result.unmappedGames.length > 0) console.log(`  unmapped: ${result.unmappedG
 
 console.log("\nLeaderboards:");
 for (const board of result.boards) {
-  const name = `${board.game.menuName} (${board.game.id})`;
+  const name = `${board.game.displayName} (${board.game.id})`;
 
   if (!board.ok) {
     console.log(`  ${name}: FAILED ${board.error}`);
