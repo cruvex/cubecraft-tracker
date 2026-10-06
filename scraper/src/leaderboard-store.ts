@@ -138,6 +138,7 @@ export async function savePlayerScores(
 }
 
 // The timestamp guard stops a re-run or out-of-order import overwriting a newer texture.
+// An unchanged texture is left alone, so updated_at is when the skin was first seen.
 async function savePlayerTextures(
   timestamp: Date,
   rows: BoardRow[],
@@ -157,6 +158,7 @@ async function savePlayerTextures(
       SET texture    = EXCLUDED.texture,
           updated_at = EXCLUDED.updated_at
     WHERE player_textures.updated_at < EXCLUDED.updated_at
+      AND player_textures.texture IS DISTINCT FROM EXCLUDED.texture
   `;
 }
 
