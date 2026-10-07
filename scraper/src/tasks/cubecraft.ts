@@ -84,13 +84,14 @@ async function saveRun(
 
   try {
     // boards goes in as an array of objects: a JSON string would be stored as a jsonb string.
+    // The game names are left out, as the games table has them.
     await Bun.sql`
       INSERT INTO scrape_runs ${Bun.sql({
         started_at: startedAt,
         duration_ms: Math.round(durationMs),
         status,
         error: failure ? errorMessage(failure.error) : null,
-        boards,
+        boards: boards.map(({ game, ...board }) => board),
       })}
       ON CONFLICT (started_at) DO NOTHING
     `;

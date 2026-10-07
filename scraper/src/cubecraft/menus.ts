@@ -150,17 +150,41 @@ export async function openGamesMenu(bot: Bot): Promise<Window> {
   throw new Error("The Games menu did not open");
 }
 
+const playersPattern = /Players:\s*([\d,]+)/i;
+
 /** Every game in the Games menu with its live "Players: N" count. */
 export function readGameCounts(window: Window): { name: string; players: number }[] {
   const counts: { name: string; players: number }[] = [];
 
   for (const item of containerSlots(window)) {
     if (!item) continue;
-    const players = parseNumber(loreOf(item), /Players:\s*([\d,]+)/i);
+    const players = parseNumber(loreOf(item), playersPattern);
     if (players !== null) counts.push({ name: nameOf(item), players });
   }
 
   return counts;
+}
+
+export type GameEntry = {
+  slot: number;
+  name: string;
+  // Null when the lore has no "Players: N" line, which is what readGameCounts skips.
+  players: number | null;
+  lore: string[];
+  // The item as the server sent it, for what flattening the lore to text leaves out.
+  raw: unknown;
+};
+
+/** Every named entry in the Games menu, counted or not, to say what a game that gave no count looked like. */
+export function readGameEntries(window: Window): GameEntry[] {
+  return containerSlots(window).flatMap((item, slot) => {
+    if (!item || nameOf(item) === "") return [];
+
+    const lore = loreOf(item);
+    const raw = { item: item.name, count: item.count, customName: item.customName, customLore: item.customLore };
+
+    return [{ slot, name: nameOf(item), players: parseNumber(lore, playersPattern), lore, raw }];
+  });
 }
 
 /**

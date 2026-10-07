@@ -1,6 +1,14 @@
 import { gameMatcher, type Game } from "../games";
 import { connect } from "./connection";
-import { openGamesMenu, readGameCounts, scrapeLeaderboard, type ScrapedRow, type Window } from "./menus";
+import {
+  openGamesMenu,
+  readGameCounts,
+  readGameEntries,
+  scrapeLeaderboard,
+  type GameEntry,
+  type ScrapedRow,
+  type Window,
+} from "./menus";
 
 export type Board = { game: Game; readAt: Date; attempts: number } & (
   | { ok: true; rows: ScrapedRow[]; complete: boolean }
@@ -13,6 +21,9 @@ export type ScrapeResult = {
   unmappedGames: string[];
   boards: Board[];
 };
+
+// The whole Games menu is logged once per process, as what a healthy one looks like.
+let menuLogged = false;
 
 /**
  * One login: read every game's player count off the Games menu, then open the
@@ -46,6 +57,20 @@ export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promi
       } else {
         counts.push({ gameId: game.id, players });
       }
+    }
+
+    const entries = readGameEntries(menu);
+
+    if (!menuLogged) {
+      menuLogged = true;
+      console.log(`[cubecraft] Games menu as first read: ${show(entries.map(({ raw, ...entry }) => entry), 8000)}`);
+    }
+
+    for (const game of games) {
+      if (counts.some((c) => c.gameId === game.id)) continue;
+
+      const note = missingCountNote(game, entries, gameOf);
+      if (note) console.warn(`[cubecraft] ${note}`);
     }
 
     // Every board starts from the Games menu; the one read for the counts is
@@ -84,6 +109,24 @@ export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promi
     signal.removeEventListener("abort", onAbort);
     bot.quit();
   }
+}
+
+// Says what the menu held for a game that gave no count; stays quiet for an inactive game that is not listed.
+function missingCountNote(game: Game, entries: GameEntry[], gameOf: (name: string) => Game | undefined) {
+  const own = entries.filter((e) => gameOf(e.name)?.id === game.id);
+
+  if (own.length > 0) {
+    const counted = entries.find((e) => e.players !== null);
+    return `no player count for ${game.displayName}; its entry reads ${show(own)}; a game with a count reads ${show(counted)}`;
+  }
+
+  if (game.active) return `${game.displayName} is not in the Games menu, which lists ${entries.map((e) => e.name).join(", ")}`;
+}
+
+// Capped so one odd item cannot flood the log.
+function show(value: unknown, max = 2000): string {
+  const text = JSON.stringify(value) ?? "nothing";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 function describe(error: unknown): string {
