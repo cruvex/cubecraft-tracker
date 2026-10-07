@@ -109,14 +109,17 @@ export async function getTopGainersHistory(days = 30, gameId: number, limit = 10
 // How far before a month's start the carry snapshot may be; month coverage uses the same tolerance.
 const CARRY_WINDOW = "3 days";
 
-// CTEs `bounds` (the month's start and stop) and `carry` (the game's last snapshot within CARRY_WINDOW before the start).
-function monthCtes(month: string, gameId: number) {
-  const start = `${month}-01`;
+// CTEs `bounds` (the period's start and stop) and `carry` (the game's last snapshot within CARRY_WINDOW before the start).
+// `period` is a month ("YYYY-MM") or a year ("YYYY").
+function periodCtes(period: string, gameId: number) {
+  const isYear = period.length === 4;
+  const start = isYear ? `${period}-01-01` : `${period}-01`;
+  const length = isYear ? "1 year" : "1 month";
   return Bun.sql`
     bounds AS (
       SELECT
-        CAST(${start} AS timestamp)                      AS start,
-        CAST(${start} AS timestamp) + INTERVAL '1 month' AS stop
+        CAST(${start} AS timestamp)                                   AS start,
+        CAST(${start} AS timestamp) + CAST(${length} AS INTERVAL)     AS stop
     ),
     carry AS (
       SELECT ls.id
@@ -131,13 +134,13 @@ function monthCtes(month: string, gameId: number) {
   `;
 }
 
-/** A player's readings in a month ("YYYY-MM"), starting with their reading in the carry snapshot, plus their latest reading. */
-export async function getPlayerMonthScores(uuid: string, month: string, gameId: number) {
+/** A player's readings in a month ("YYYY-MM") or year ("YYYY"), starting with their reading in the carry snapshot, plus their latest reading. */
+export async function getPlayerPeriodScores(uuid: string, period: string, gameId: number) {
   const ign = await getIgnByUuid(uuid);
   if (!ign) return null;
 
   const scores = await Bun.sql`
-    WITH ${monthCtes(month, gameId)}
+    WITH ${periodCtes(period, gameId)}
     SELECT ls.timestamp, lr.score, lr.position, ls.id = (SELECT id FROM carry) AS is_carry
     FROM leaderboard_rows lr
     JOIN leaderboard_snapshots ls ON ls.id = lr.snapshot_id
@@ -177,17 +180,17 @@ export async function getPlayerMonthScores(uuid: string, month: string, gameId: 
   return {
     player: uuid,
     ign,
-    month,
+    period,
     rows,
     gain,
     current: latest ? { score: Number(latest.score), position: Number(latest.position) } : null,
   };
 }
 
-/** Gainers over a month ("YYYY-MM"), measured from the carry snapshot for players who are in it. */
-export async function getTopGainersForMonth(month: string, gameId: number) {
+/** Gainers over a month ("YYYY-MM") or year ("YYYY"), measured from the carry snapshot for players who are in it. */
+export async function getTopGainersForPeriod(period: string, gameId: number) {
   const res = await Bun.sql`
-    WITH ${monthCtes(month, gameId)},
+    WITH ${periodCtes(period, gameId)},
     readings AS (
       SELECT
         lr.player,
@@ -201,7 +204,7 @@ export async function getTopGainersForMonth(month: string, gameId: number) {
         AND ls.timestamp < b.stop
       GROUP BY lr.player
     ),
-    -- Players missing from the carry snapshot count from their first reading in the month.
+    -- Players missing from the carry snapshot count from their first reading in the period.
     gains AS (
       SELECT r.player, r.last_score - COALESCE(c.score, r.first_score) AS score_gain
       FROM readings r

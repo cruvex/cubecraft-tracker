@@ -1,9 +1,19 @@
-import { getUuidByIgn, getUuidsByIgns, getTopGainers, getTopGainersForMonth, getTopGainerMonths, getTopGainersHistory, getPlayersHistory, getPlayerScores, getPlayerMonthScores, getLeaderboard, getLastSnapshotTimes, getGamePopulation, getServerPopulation, getServerStatus, getActiveHours, searchPlayers } from "./db";
+import { getUuidByIgn, getUuidsByIgns, getTopGainers, getTopGainersForPeriod, getTopGainerMonths, getTopGainersHistory, getPlayersHistory, getPlayerScores, getPlayerPeriodScores, getLeaderboard, getLastSnapshotTimes, getGamePopulation, getServerPopulation, getServerStatus, getActiveHours, searchPlayers } from "./db";
 import { fetchGames } from "./cubepanion";
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const YEAR_PATTERN = /^\d{4}$/;
+
+/** The `month` or `year` query param as one period string; null if neither, or an error response if invalid. */
+function parsePeriod(url: URL): string | null | Response {
+    const month = url.searchParams.get("month");
+    const year = url.searchParams.get("year");
+    if (month && !MONTH_PATTERN.test(month)) return jsonResponse({ error: "Invalid month" }, 400);
+    if (year && !YEAR_PATTERN.test(year)) return jsonResponse({ error: "Invalid year" }, 400);
+    return month || year || null;
+}
 
 // Utility helpers
 function jsonResponse(obj: unknown, status = 200) {
@@ -24,11 +34,11 @@ async function resolvePlayerId(id: string): Promise<string | null> {
 async function handleTopGainers(req: Request, params: { gameId: string }) {
     const url = new URL(req.url);
     const days = Number(url.searchParams.get("days") || 30);
-    const month = url.searchParams.get("month");
+    const period = parsePeriod(url);
     const gameId = Number(params.gameId);
     if (isNaN(gameId)) return jsonResponse({ error: "Invalid gameId" }, 400);
-    if (month && !MONTH_PATTERN.test(month)) return jsonResponse({ error: "Invalid month" }, 400);
-    const result = month ? await getTopGainersForMonth(month, gameId) : await getTopGainers(days, gameId);
+    if (period instanceof Response) return period;
+    const result = period ? await getTopGainersForPeriod(period, gameId) : await getTopGainers(days, gameId);
     return jsonResponse(result);
 }
 
@@ -79,11 +89,11 @@ async function handlePlayerScores(req: Request, params: { gameId: string, id: st
     }
     const url = new URL(req.url);
     const days = Number(url.searchParams.get("days") || 30);
-    const month = url.searchParams.get("month");
+    const period = parsePeriod(url);
     const gameId = Number(params.gameId);
     if (isNaN(gameId)) return jsonResponse({ error: "Invalid gameId" }, 400);
-    if (month && !MONTH_PATTERN.test(month)) return jsonResponse({ error: "Invalid month" }, 400);
-    const result = month ? await getPlayerMonthScores(id, month, gameId) : await getPlayerScores(id, days, gameId);
+    if (period instanceof Response) return period;
+    const result = period ? await getPlayerPeriodScores(id, period, gameId) : await getPlayerScores(id, days, gameId);
     if (!result) {
         return jsonResponse({ error: "Player scores not found" }, 404);
     }

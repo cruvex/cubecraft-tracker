@@ -22,8 +22,9 @@ function qs(params) {
 export const endpoints = {
   games: () => `/games`,
 
-  /** Sidebar top-gainers list for the last `days` or a `month` ("YYYY-MM"). */
-  topGainers: (gameId, { days, month }) => `/games/${gameId}/top-gainers${qs({ days, month })}`,
+  /** Sidebar top-gainers list for the last `days`, a `month` ("YYYY-MM") or a `year` ("YYYY"). */
+  topGainers: (gameId, { days, month, year }) =>
+    `/games/${gameId}/top-gainers${qs({ days, month, year })}`,
 
   /** Months for the sidebar's period dropdown. */
   topGainerMonths: (gameId) => `/games/${gameId}/top-gainers/months`,
@@ -36,9 +37,9 @@ export const endpoints = {
   playersHistory: (gameId, ids, days) =>
     `/games/${gameId}/players/history${qs({ ids: ids.join(","), days })}`,
 
-  /** One player's history for the last `days` or a `month` ("YYYY-MM"). */
-  playerScores: (gameId, idOrIgn, { days, month }) =>
-    `/games/${gameId}/player/${encodeURIComponent(idOrIgn)}${qs({ days, month })}`,
+  /** One player's history for the last `days`, a `month` ("YYYY-MM") or a `year` ("YYYY"). */
+  playerScores: (gameId, idOrIgn, { days, month, year }) =>
+    `/games/${gameId}/player/${encodeURIComponent(idOrIgn)}${qs({ days, month, year })}`,
 
   leaderboard: (gameId, days) => `/games/${gameId}/leaderboard${qs({ days })}`,
 

@@ -5,7 +5,7 @@ import { apiFetch, endpoints } from "./api.js";
 import { renderLabels } from "./labels.js";
 import { loadPlayerProfile, scrollToPlayerProfile } from "./playerProfile.js";
 import { addToComparison, isInComparison } from "./comparisonSelection.js";
-import { selectedPeriod, formatMonth, formatShortMonth } from "./period.js";
+import { selectedPeriod, currentYear, formatMonth, formatShortMonth } from "./period.js";
 
 /** The current game's months, keyed by "YYYY-MM". */
 let months = new Map();
@@ -77,7 +77,8 @@ function renderPeriodOptions() {
   select.replaceChildren(
     new Option("Last 7 days", "7"),
     new Option("Last 30 days", "30"),
-    new Option("This month", thisMonth)
+    new Option("This month", thisMonth),
+    new Option("This year", currentYear())
   );
 
   if (past.length) {

@@ -6,7 +6,7 @@ import { apiFetch, endpoints } from "./api.js";
 import { updatePath } from "./router.js";
 import { renderPlayerChart, destroyPlayerChart } from "./charts/playerChart.js";
 import { addToComparison, isInComparison } from "./comparisonSelection.js";
-import { selectedPeriod, periodLabel, monthStart, formatMonth } from "./period.js";
+import { selectedPeriod, periodLabel, monthStart } from "./period.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -110,7 +110,7 @@ export function renderPlayerProfile(scoreData, scoreType) {
     else if (value < 0) elem.classList.add("text-negative");
   };
 
-  const { month, rows, current } = scoreData;
+  const { rows, current } = scoreData;
 
   el("displayGainPeriod").innerText = periodLabel();
   setGainEl("displayGain", periodGain(scoreData), true);
@@ -128,7 +128,7 @@ export function renderPlayerProfile(scoreData, scoreType) {
     emptyEl.style.display = "none";
     renderPlayerChart(rows, scoreType, chartRange(rows));
   } else {
-    emptyEl.textContent = month ? `No data for ${formatMonth(month)}` : "No data";
+    emptyEl.textContent = scoreData.period ? `No data for ${periodLabel()}` : "No data";
     emptyEl.style.display = "flex";
     destroyPlayerChart();
   }
@@ -146,21 +146,22 @@ function periodGain(scoreData) {
 /** The chart's x-axis span, in epoch ms, for the selected period. */
 function chartRange(rows) {
   const now = Date.now();
-  const { days, month } = selectedPeriod();
+  const { days, month, year } = selectedPeriod();
 
   if (days) {
     return { min: now - days * DAY_MS, max: now };
   }
 
-  const start = monthStart(month);
+  const start = year ? new Date(`${year}-01-01T00:00:00Z`) : monthStart(month);
   const end = new Date(start);
-  end.setUTCMonth(end.getUTCMonth() + 1);
+  if (year) end.setUTCFullYear(end.getUTCFullYear() + 1);
+  else end.setUTCMonth(end.getUTCMonth() + 1);
   const firstReading = new Date(rows[0].timestamp);
 
   return {
-    // Starts at the carry reading when it is before the 1st.
+    // Starts at the carry reading when it is before the period's start.
     min: Math.min(start.getTime(), firstReading.getTime()),
-    // The current month ends now.
+    // The current period ends now.
     max: Math.min(end.getTime(), now),
   };
 }
