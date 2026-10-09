@@ -206,7 +206,7 @@ async function savePlayerTextures(
   for (const row of leaderboard.rows) {
     const player = uuidMap.get(row.player.toLowerCase()) || row.player;
 
-    textures.set(player, {
+    textures.set(player.replace(/-/g, "").toLowerCase(), {
       player_uuid: player,
       texture: row.texture,
       updated_at: leaderboard.lastUpdated,
@@ -238,13 +238,13 @@ async function getLastGameSnapshotTimestamp(
 
 async function getCachedPlayers(igns: string[]): Promise<PlayerProfile[]> {
   const res = await Bun.sql`
-    SELECT DISTINCT ON (player_uuid)
+    SELECT DISTINCT ON (player_ign)
         id,
         player_ign AS ign,
         player_uuid AS uuid
     FROM ign_history
     WHERE player_ign IN ${Bun.sql(igns)}
-    ORDER BY player_uuid, id
+    ORDER BY player_ign, id DESC
   `;
 
   const parsed = z.array(PlayerProfileShema).safeParse(res);
