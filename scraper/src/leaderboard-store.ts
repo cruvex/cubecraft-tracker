@@ -12,7 +12,7 @@ export type BoardRow = {
 };
 
 /**
- * IGN (lowercased) -> uuid, from the ign_history cache first and Mojang for the
+ * IGN (exact casing) -> uuid, from the ign_history cache first and Mojang for the
  * rest. Names Mojang does not know are simply absent from the map.
  */
 export async function resolvePlayerUUIDs(
@@ -20,24 +20,24 @@ export async function resolvePlayerUUIDs(
   signal: AbortSignal,
 ): Promise<Map<string, string>> {
   const cachedPlayers = await getCachedPlayers(igns);
-  const cachedIgns = new Set(cachedPlayers.map((p) => p.ign.toLowerCase()));
+  const cachedIgns = new Set(cachedPlayers.map((p) => p.ign));
 
-  const uncachedIgns = igns.filter((ign) => !cachedIgns.has(ign.toLowerCase()));
+  const uncachedIgns = igns.filter((ign) => !cachedIgns.has(ign));
 
   let unknownPlayers: PlayerProfile[] = [];
 
   if (uncachedIgns.length > 0) {
     console.log(`Fetching from Mojang: ${uncachedIgns.join(", ")}`);
-    unknownPlayers = await fetchUnknownPlayers(uncachedIgns, signal);
+    const requested = new Set(uncachedIgns);
+    // Mojang matches case-insensitively; a name cased differently from the board's is not this player's.
+    unknownPlayers = (await fetchUnknownPlayers(uncachedIgns, signal)).filter((p) => requested.has(p.ign));
 
     if (unknownPlayers.length > 0) {
       await insertCachedPlayers(unknownPlayers);
     }
 
     // Logged only: the Discord post does not name players.
-    const notFound = uncachedIgns.filter(
-      (ign) => !unknownPlayers.some((p) => p.ign.toLowerCase() === ign.toLowerCase()),
-    );
+    const notFound = uncachedIgns.filter((ign) => !unknownPlayers.some((p) => p.ign === ign));
 
     if (notFound.length > 0) {
       console.log(`Not found at Mojang: ${notFound.join(", ")}`);
@@ -46,7 +46,7 @@ export async function resolvePlayerUUIDs(
 
   const uuidMap = new Map<string, string>();
   for (const player of [...cachedPlayers, ...unknownPlayers]) {
-    uuidMap.set(player.ign.toLowerCase(), player.uuid);
+    uuidMap.set(player.ign, player.uuid);
   }
 
   return uuidMap;
@@ -69,7 +69,7 @@ export async function savePlayerScores(
   // Two IGNs on one uuid would start two periods with the same key, so the higher-placed row wins.
   const board = new Map<string, BoardRow>();
   for (const row of rows) {
-    const player = normalizeUuid(uuidMap.get(row.player.toLowerCase())!);
+    const player = normalizeUuid(uuidMap.get(row.player)!);
     if (board.has(player)) {
       console.warn(`${row.player} resolves to the same uuid as ${board.get(player)!.player}; keeping the higher-placed row`);
       continue;
@@ -148,7 +148,7 @@ async function savePlayerTextures(
   const textures = new Map<string, PlayerTextureRow>();
 
   for (const row of rows) {
-    const player = uuidMap.get(row.player.toLowerCase())!;
+    const player = uuidMap.get(row.player)!;
     textures.set(player, { player_uuid: player, texture: row.texture, updated_at: timestamp });
   }
 

@@ -135,7 +135,7 @@ async function saveBoard(board: Board, signal: AbortSignal): Promise<BoardReport
   const uuidMap = await resolvePlayerUUIDs(board.rows.map((row) => row.player), signal);
 
   // player_scores.player is a uuid column, so an unresolved player cannot be stored at all.
-  const notFound = board.rows.filter((row) => !uuidMap.has(row.player.toLowerCase())).map((row) => row.player);
+  const notFound = board.rows.filter((row) => !uuidMap.has(row.player)).map((row) => row.player);
   if (notFound.length > 0) {
     return { game, status: "unresolved", resolved: board.rows.length - notFound.length, total: board.rows.length, notFound };
   }
