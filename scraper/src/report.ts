@@ -128,12 +128,9 @@ function reason(p: Problem): string {
 
 const count = (n: number) => n.toLocaleString("en-US");
 
+// The stack is in the logs; the post only needs to say what went wrong.
 function formatError(error: unknown): string {
-  if (!(error instanceof Error)) return truncate(String(error), 1000);
-
-  // Bun does not always prefix the stack with the message.
-  const stack = error.stack ?? "";
-  return truncate(stack.includes(error.message) ? stack : `${error.message}\n${stack}`.trim(), 1000);
+  return truncate(error instanceof Error ? error.message : String(error), 1000);
 }
 
 const truncate = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
