@@ -80,7 +80,7 @@ async function saveCounts({ countsReadAt, counts }: ScrapeResult) {
 }
 
 async function saveRun(startedAt: Date, durationMs: number, { boards, ...rest }: RunDetails) {
-  const skipped = boards?.some((b) => b.status !== "saved" && b.status !== "unchanged");
+  const skipped = boards?.some((b) => b.status !== "saved" && b.status !== "unchanged") || rest.unmapped !== undefined;
   const status = rest.error !== undefined ? "failed" : skipped ? "degraded" : "ok";
 
   try {
