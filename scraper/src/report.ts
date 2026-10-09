@@ -74,55 +74,41 @@ function problemsOf(boards: BoardReport[]): Problem[] {
   return boards.filter((b): b is Problem => b.status !== "saved" && b.status !== "unchanged");
 }
 
-const recoveredEmbed = {
-  title: "Back to normal",
-  description: "Every leaderboard and player count is being read again.",
-  color: green,
-};
+const recoveredEmbed = { title: "Back to normal", color: green };
 
 function failedEmbed(error: unknown) {
-  return {
-    title: "The CubeCraft scrape failed",
-    description: `Nothing was read this run. It is retried every 5 minutes, and this is posted again only once it changes.\n${codeBlock(formatError(error))}`,
-    color: red,
-  };
+  return { title: "Scrape failed", description: codeBlock(formatError(error)), color: red };
 }
 
 function problemsEmbed(report: Extract<RunReport, { kind: "run" }>) {
   const problems = problemsOf(report.boards);
   const fine = report.boards.length - problems.length;
+  const color = fine > 0 ? yellow : red;
+  const unmapped = report.unmappedGames.join(", ");
 
-  const fields = problems.map((p) => ({ name: `⚠️ ${p.game}`, value: reason(p), inline: false }));
+  if (problems.length === 0) return { title: "Unmapped menu entries", description: unmapped, color };
 
-  if (report.unmappedGames.length > 0) {
-    fields.push({
-      name: "New in the Games menu",
-      value: `${report.unmappedGames.join(", ")}: not tracked, as no game in the games table has this menu name`,
-      inline: false,
-    });
-  }
+  const fields = problems.map((p) => ({ name: p.game, value: reason(p), inline: false }));
+  if (unmapped) fields.push({ name: "Unmapped menu entries", value: unmapped, inline: false });
 
   return {
-    title:
-      problems.length === 0
-        ? "Untracked games in the Games menu"
-        : `${problems.length} leaderboard${problems.length === 1 ? "" : "s"} not updating`,
-    description: problems.length > 0 ? `The other ${fine} are fine. Skipped boards are tried again every 5 minutes.` : undefined,
-    color: fine > 0 ? yellow : red,
+    title: `${problems.length} leaderboard${problems.length === 1 ? "" : "s"} skipped`,
+    color,
     fields,
+    ...(fine > 0 && { footer: { text: `${fine} other${fine === 1 ? "" : "s"} fine` } }),
   };
 }
 
 function reason(p: Problem): string {
   switch (p.status) {
     case "partial":
-      return `Skipped: the leaderboard stopped loading after ${count(p.rows)} players`;
+      return `Stopped loading after ${count(p.rows)} players`;
     case "unresolved":
-      return `Skipped: ${count(p.total - p.resolved)} of ${count(p.total)} names could not be matched to a Minecraft account`;
+      return `${count(p.total - p.resolved)} of ${count(p.total)} names unmatched`;
     case "failed":
-      return `Skipped: ${p.error}`;
+      return p.error;
     case "crashed":
-      return `Skipped: saving the board failed: ${p.error}`;
+      return `Save failed: ${p.error}`;
   }
 }
 
