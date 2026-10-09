@@ -1,5 +1,5 @@
 {
-  "name": "cubecraft-leaderboard-tracker",
+  "name": "cubecraft-tracker",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -7,7 +7,6 @@
     "dashboard:dev": "bun run --cwd dashboard dev",
     "api:dev": "bun --hot api/src/index.ts",
     "api:migrate": "bun api/src/migrate.ts",
-    "api:bench": "bun api/src/bench.ts",
     "db:refresh": "bun scripts/refresh-db.ts"
   },
   "devDependencies": {
