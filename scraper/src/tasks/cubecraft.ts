@@ -14,29 +14,30 @@ export const cubecraft: Task = {
 
   async run({ signal, firedAt }) {
     const started = performance.now();
-    const boards: BoardRun[] = [];
-    let failure: { error: unknown } | undefined;
+    const details: RunDetails = {};
 
     try {
-      await scrapeAndSave(signal, boards);
+      await scrapeAndSave(signal, details);
     } catch (err) {
-      failure = { error: err };
+      details.error = errorMessage(err);
       throw err;
     } finally {
-      // Also when the run failed or timed out, with whichever boards it got through.
-      await saveRun(firedAt, performance.now() - started, boards, failure);
+      // Also when the run failed or timed out, with whatever it got through.
+      await saveRun(firedAt, performance.now() - started, details);
     }
   },
 };
 
-// What a run did with one board, as stored in scrape_runs.boards.
+// What a board run is stored as: the game's id and attempts, and how it went.
 type BoardRun = { gameId: number; attempts: number } & BoardReport;
 
-async function scrapeAndSave(signal: AbortSignal, boards: BoardRun[]) {
+// What scrape_runs.details holds; a key is there only when it applies.
+type RunDetails = { boards?: BoardRun[]; missingCounts?: number[]; unmapped?: string[]; error?: string };
+
+async function scrapeAndSave(signal: AbortSignal, details: RunDetails) {
   let result: ScrapeResult;
 
   try {
-    // The games task keeps this table up to date, so a run does not depend on Cubepanion being up.
     const games = await loadGames();
     if (games.length === 0) throw new Error("The games table is empty");
 
@@ -46,7 +47,12 @@ async function scrapeAndSave(signal: AbortSignal, boards: BoardRun[]) {
     throw err;
   }
 
+  if (result.missingCounts.length > 0) details.missingCounts = result.missingCounts;
+  if (result.unmappedGames.length > 0) details.unmapped = result.unmappedGames;
+
   await saveCounts(result);
+
+  const boards: BoardRun[] = (details.boards = []);
 
   for (const board of result.boards) {
     const report = await saveBoardSafely(board, signal);
@@ -73,25 +79,21 @@ async function saveCounts({ countsReadAt, counts }: ScrapeResult) {
   `;
 }
 
-async function saveRun(
-  startedAt: Date,
-  durationMs: number,
-  boards: BoardRun[],
-  failure: { error: unknown } | undefined,
-) {
-  const skipped = boards.some((b) => b.status !== "saved" && b.status !== "unchanged");
-  const status = failure ? "failed" : skipped ? "degraded" : "ok";
+async function saveRun(startedAt: Date, durationMs: number, { boards, ...rest }: RunDetails) {
+  const skipped = boards?.some((b) => b.status !== "saved" && b.status !== "unchanged");
+  const status = rest.error !== undefined ? "failed" : skipped ? "degraded" : "ok";
 
   try {
-    // boards goes in as an array of objects: a JSON string would be stored as a jsonb string.
+    // details goes in as an object: a JSON string would be stored as a jsonb string.
     // The game names are left out, as the games table has them.
+    const details = { ...rest, ...(boards && { boards: boards.map(({ game, ...board }) => board) }) };
+
     await Bun.sql`
       INSERT INTO scrape_runs ${Bun.sql({
         started_at: startedAt,
         duration_ms: Math.round(durationMs),
         status,
-        error: failure ? errorMessage(failure.error) : null,
-        boards: boards.map(({ game, ...board }) => board),
+        details,
       })}
       ON CONFLICT (started_at) DO NOTHING
     `;

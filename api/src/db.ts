@@ -221,11 +221,9 @@ export async function getTopGainerMonths(gameId: number) {
   });
 }
 
-/** Latest read time per game; games without reads are absent. */
-// Cubepanion's games, as the scraper's games task last synced them. Ordered by name, as Cubepanion lists them.
 export async function getGames() {
   const rows = await Bun.sql`
-    SELECT id, name, display_name, aliases, active, score_type, should_track, has_pre_lobby
+    SELECT id, name, display_name, active, score_type
     FROM games
     ORDER BY name
   `;
@@ -234,14 +232,12 @@ export async function getGames() {
     id: r.id as number,
     name: r.name as string,
     displayName: r.display_name as string,
-    aliases: r.aliases as string[],
     active: r.active as boolean,
     scoreType: r.score_type as string,
-    shouldTrack: r.should_track as boolean,
-    hasPreLobby: r.has_pre_lobby as boolean,
   }));
 }
 
+/** Latest read time per game; games without reads are absent. */
 export async function getLastSnapshotTimes(gameIds: number[]): Promise<Map<number, string | null>> {
   // One lookup per game: each is an index probe, where a GROUP BY would scan the whole table.
   const times = await Promise.all(

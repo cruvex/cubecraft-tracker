@@ -38,7 +38,7 @@ const maxPages = 25;
 const isNext: Matcher = (name) => /^next$/i.test(name);
 
 /** Chat components arrive in several shapes; flatten all of them to text. */
-function flatten(node: unknown): string {
+export function flatten(node: unknown): string {
   if (node == null) return "";
   if (typeof node === "string") return node;
   if (typeof node === "number" || typeof node === "boolean") return String(node);

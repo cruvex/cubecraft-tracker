@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import mineflayer, { type Bot } from "mineflayer";
+import { flatten } from "./menus";
 
 const host = process.env.CUBECRAFT_HOST || "play.cubecraft.net";
 const port = Number(process.env.CUBECRAFT_PORT || 25565);
@@ -81,8 +82,8 @@ export function connect(signal: AbortSignal): Promise<Bot> {
       loginTimeoutMs,
     );
 
-    function onKicked(reason: string) {
-      fail(new Error(`Kicked: ${typeof reason === "string" ? reason : JSON.stringify(reason)}`));
+    function onKicked(reason: unknown) {
+      fail(new Error(`Kicked: ${kickText(reason)}`));
     }
     function onError(err: Error) {
       fail(err);
@@ -228,6 +229,21 @@ function fixResourcePackUuid(bot: Bot) {
     }
     return write(name, params);
   };
+}
+
+/** A kick reason is a chat component, as JSON text or already parsed; this is just its words. */
+export function kickText(reason: unknown): string {
+  let component = reason;
+
+  if (typeof reason === "string") {
+    try {
+      component = JSON.parse(reason);
+    } catch {
+      // Plain text.
+    }
+  }
+
+  return flatten(component).trim() || JSON.stringify(reason);
 }
 
 /** varint-length-prefixed UTF-8, the wire format of a brand payload. */

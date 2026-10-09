@@ -18,6 +18,8 @@ export type Board = { game: Game; readAt: Date; attempts: number } & (
 export type ScrapeResult = {
   countsReadAt: Date;
   counts: { gameId: number; players: number }[];
+  // Active games the Games menu gave no count for.
+  missingCounts: number[];
   unmappedGames: string[];
   boards: Board[];
 };
@@ -27,8 +29,9 @@ let menuLogged = false;
 
 /**
  * One login: read every game's player count off the Games menu, then open the
- * leaderboard of each active game in turn. A board that fails is reported and
- * the rest carry on; only failing to log in or to open the Games menu throws.
+ * leaderboard of each active game that has one in turn. A board that fails is
+ * reported and the rest carry on; only failing to log in or to open the Games
+ * menu throws.
  */
 export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promise<ScrapeResult> {
   const gameOf = gameMatcher(games);
@@ -66,12 +69,8 @@ export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promi
       console.log(`[cubecraft] Games menu as first read: ${show(entries.map(({ raw, ...entry }) => entry), 8000)}`);
     }
 
-    for (const game of games) {
-      if (counts.some((c) => c.gameId === game.id)) continue;
-
-      const note = missingCountNote(game, entries, gameOf);
-      if (note) console.warn(`[cubecraft] ${note}`);
-    }
+    const missing = games.filter((g) => g.active && !counts.some((c) => c.gameId === g.id));
+    for (const game of missing) console.warn(`[cubecraft] ${missingCountNote(game, entries, gameOf)}`);
 
     // Every board starts from the Games menu; the one read for the counts is
     // used for the first, the rest open it again.
@@ -84,7 +83,7 @@ export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promi
 
     const boards: Board[] = [];
 
-    for (const game of games.filter((g) => g.active)) {
+    for (const game of games.filter((g) => g.active && g.hasLeaderboard)) {
       let board: Board | undefined;
 
       // One retry: a board that fails or stops early has so far always been a
@@ -104,23 +103,23 @@ export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promi
       boards.push(board!);
     }
 
-    return { countsReadAt, counts, unmappedGames, boards };
+    return { countsReadAt, counts, missingCounts: missing.map((g) => g.id), unmappedGames, boards };
   } finally {
     signal.removeEventListener("abort", onAbort);
     bot.quit();
   }
 }
 
-// Says what the menu held for a game that gave no count; stays quiet for an inactive game that is not listed.
-function missingCountNote(game: Game, entries: GameEntry[], gameOf: (name: string) => Game | undefined) {
+// Says what the menu held for an active game that gave no count.
+function missingCountNote(game: Game, entries: GameEntry[], gameOf: (name: string) => Game | undefined): string {
   const own = entries.filter((e) => gameOf(e.name)?.id === game.id);
 
-  if (own.length > 0) {
-    const counted = entries.find((e) => e.players !== null);
-    return `no player count for ${game.displayName}; its entry reads ${show(own)}; a game with a count reads ${show(counted)}`;
+  if (own.length === 0) {
+    return `${game.displayName} is not in the Games menu, which lists ${entries.map((e) => e.name).join(", ")}`;
   }
 
-  if (game.active) return `${game.displayName} is not in the Games menu, which lists ${entries.map((e) => e.name).join(", ")}`;
+  const counted = entries.find((e) => e.players !== null);
+  return `no player count for ${game.displayName}; its entry reads ${show(own)}; a game with a count reads ${show(counted)}`;
 }
 
 // Capped so one odd item cannot flood the log.

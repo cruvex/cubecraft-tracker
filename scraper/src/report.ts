@@ -1,4 +1,4 @@
-// Posts to the Discord webhook when the set of problems changes, and when Cubepanion's games change.
+// Posts to the Discord webhook when the set of problems changes.
 const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
 
 const ownerId = "255361968037167105";
@@ -8,10 +8,6 @@ const ping = { content: `<@${ownerId}>`, allowed_mentions: { users: [ownerId] } 
 const green = 0x57f287;
 const yellow = 0xfee75c;
 const red = 0xed4245;
-const blue = 0x5865f2;
-
-// Discord allows 4096 in an embed description; this leaves room for the code fence.
-const maxDescription = 3500;
 
 export type BoardReport = { game: string } & (
   | { status: "saved"; changed: number }
@@ -42,17 +38,6 @@ export async function sendReport(report: RunReport) {
   if (problems === "") return await post(recoveredEmbed);
 
   await post(report.kind === "failed" ? failedEmbed(report.error) : problemsEmbed(report), ping);
-}
-
-// Not part of the problem tracking: every change is news, and nobody is pinged.
-export async function sendGamesChanged(changes: string[]) {
-  if (changes.length === 0) return;
-
-  await post({
-    title: "Cubepanion's games changed",
-    description: codeBlock(truncate(changes.join("\n"), maxDescription)),
-    color: blue,
-  });
 }
 
 async function post(embed: object, mention: object = {}) {
@@ -112,7 +97,7 @@ function problemsEmbed(report: Extract<RunReport, { kind: "run" }>) {
   if (report.unmappedGames.length > 0) {
     fields.push({
       name: "New in the Games menu",
-      value: `${report.unmappedGames.join(", ")}: not tracked, as no game in Cubepanion's list has this name or alias`,
+      value: `${report.unmappedGames.join(", ")}: not tracked, as no game in the games table has this menu name`,
       inline: false,
     });
   }
