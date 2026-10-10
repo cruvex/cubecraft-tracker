@@ -1,171 +1,124 @@
-/**
- * Posts a run summary to a Discord webhook. Sends nothing when
- * DISCORD_WEBHOOK_URL is unset, or when the run changed nothing.
- */
+// Posts to the Discord webhook when the set of problems changes.
 const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
 
-/** Pinged on any run that did not do everything it was supposed to. */
 const ownerId = "255361968037167105";
+// Only a mention in the message body notifies; one in an embed is just a link.
+const ping = { content: `<@${ownerId}>`, allowed_mentions: { users: [ownerId] } };
 
 const green = 0x57f287;
 const yellow = 0xfee75c;
 const red = 0xed4245;
 
-export type GameReport = { game: string } & (
-  | { status: "saved"; lastUpdated: Date }
+export type BoardReport = { game: string } & (
+  | { status: "saved"; changed: number }
   | { status: "unchanged" }
-  | { status: "partial"; rows: number; expected: number }
-  | { status: "unresolved"; resolved: number; total: number }
-  | { status: "missing" }
+  | { status: "partial"; rows: number }
+  // notFound goes to scrape_runs only: the Discord post does not name players.
+  | { status: "unresolved"; resolved: number; total: number; notFound: string[] }
+  | { status: "failed"; error: string }
+  // The board was read but saving it threw.
+  | { status: "crashed"; error: string }
 );
 
-type ReportedGame = Exclude<GameReport, { status: "unchanged" }>;
+type Problem = Exclude<BoardReport, { status: "saved" | "unchanged" }>;
 
 export type RunReport =
-  | { kind: "run"; games: GameReport[] }
-  | { kind: "disabled" }
+  | { kind: "run"; boards: BoardReport[]; unmappedGames: string[] }
   | { kind: "failed"; error: unknown };
 
+// What the last post said was wrong; in memory, so a restart with a problem ongoing posts it again.
+let lastProblems = "";
+
 export async function sendReport(report: RunReport) {
+  const problems = problemKey(report);
+  if (problems === lastProblems) return;
+
+  lastProblems = problems;
+
+  if (problems === "") return await post(recoveredEmbed);
+
+  await post(report.kind === "failed" ? failedEmbed(report.error) : problemsEmbed(report), ping);
+}
+
+async function post(embed: object, mention: object = {}) {
   if (!webhookUrl) return;
-
-  const embed = buildEmbed(report);
-  if (!embed) return;
-
-  // Only a mention in the message body notifies: one inside an embed renders as
-  // a link and nothing else.
-  const mention = needsAttention(report)
-    ? { content: `<@${ownerId}>`, allowed_mentions: { users: [ownerId] } }
-    : {};
 
   try {
     const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...mention, embeds: [embed] }),
+      body: JSON.stringify({ ...mention, embeds: [{ ...embed, timestamp: new Date().toISOString() }] }),
       signal: AbortSignal.timeout(10_000),
     });
 
-    if (!res.ok) {
-      console.error(`Webhook returned ${res.status}: ${await res.text()}`);
-    }
+    if (!res.ok) console.error(`Webhook returned ${res.status}: ${await res.text()}`);
   } catch (err) {
     // A scrape that worked is not a failed run just because Discord was down.
     console.error("Failed to post report:", err);
   }
 }
 
-/** Anything short of every tracked board being up to date. */
-function needsAttention(report: RunReport): boolean {
-  if (report.kind !== "run") return true;
+// The problems without their details, so a board failing with a changing message does not post every run.
+function problemKey(report: RunReport): string {
+  if (report.kind === "failed") return "run failed";
 
-  return report.games.some(
-    (g) => g.status !== "saved" && g.status !== "unchanged",
-  );
+  return [
+    ...problemsOf(report.boards).map((b) => `${b.game}:${b.status}`),
+    ...report.unmappedGames.map((name) => `unmapped:${name}`),
+  ]
+    .sort()
+    .join(",");
 }
 
-/** Returns null for a run not worth posting. */
-function buildEmbed(report: RunReport) {
-  if (report.kind === "failed") {
-    return {
-      title: "The update run failed",
-      description: `Nothing was updated this run. It will be retried on the next one.\n${codeBlock(formatError(report.error))}`,
-      color: red,
-      timestamp: new Date().toISOString(),
-    };
-  }
+function problemsOf(boards: BoardReport[]): Problem[] {
+  return boards.filter((b): b is Problem => b.status !== "saved" && b.status !== "unchanged");
+}
 
-  if (report.kind === "disabled") {
-    return {
-      title: "Leaderboards are turned off",
-      description:
-        "Cubepanion has leaderboards disabled right now, so there is nothing to update.",
-      color: yellow,
-      timestamp: new Date().toISOString(),
-    };
-  }
+const recoveredEmbed = { title: "Back to normal", color: green };
 
-  const changed = report.games.filter(
-    (g): g is ReportedGame => g.status !== "unchanged",
-  );
+function failedEmbed(error: unknown) {
+  return { title: "Scrape failed", description: codeBlock(formatError(error)), color: red };
+}
 
-  if (changed.length === 0) return null;
+function problemsEmbed(report: Extract<RunReport, { kind: "run" }>) {
+  const problems = problemsOf(report.boards);
+  const fine = report.boards.length - problems.length;
+  const color = fine > 0 ? yellow : red;
+  const unmapped = report.unmappedGames.join(", ");
 
-  const saved = changed.filter((g) => g.status === "saved");
-  const problems = changed.filter((g) => g.status !== "saved");
+  if (problems.length === 0) return { title: "Unmapped menu entries", description: unmapped, color };
+
+  const fields = problems.map((p) => ({ name: p.game, value: reason(p), inline: false }));
+  if (unmapped) fields.push({ name: "Unmapped menu entries", value: unmapped, inline: false });
 
   return {
-    title: title(saved, problems),
-    color: problems.length > 0 ? (saved.length > 0 ? yellow : red) : green,
-    fields: [...saved, ...problems].map(field),
-    description:
-      problems.length > 0
-        ? "Skipped boards are picked up again on the next run."
-        : undefined,
-    timestamp: new Date().toISOString(),
+    title: `${problems.length} leaderboard${problems.length === 1 ? "" : "s"} skipped`,
+    color,
+    fields,
+    ...(fine > 0 && { footer: { text: `${fine} other${fine === 1 ? "" : "s"} fine` } }),
   };
 }
 
-function title(saved: ReportedGame[], problems: ReportedGame[]): string {
-  if (saved.length === 0) {
-    return problems.length === 1
-      ? `${problems[0]!.game} could not be updated`
-      : `${problems.length} leaderboards could not be updated`;
-  }
-
-  const updated = `${saved.length} Leaderboard${saved.length === 1 ? "" : "s"} updated`;
-
-  // The title is all a notification shows, so it cannot say only the good half.
-  return problems.length > 0 ? `${updated}, ${problems.length} skipped` : updated;
-}
-
-function field(g: ReportedGame) {
-  const name = g.status === "saved" ? g.game : `⚠️ ${g.game}`;
-  return { name, value: value(g), inline: false };
-}
-
-function value(g: ReportedGame): string {
-  switch (g.status) {
-    case "saved":
-      return `Board updated ${full(g.lastUpdated)} | ${relative(g.lastUpdated)}`;
+function reason(p: Problem): string {
+  switch (p.status) {
     case "partial":
-      return `Skipped: Cubepanion returned an incomplete leaderboard (${count(g.rows)} of ${count(g.expected)} players)`;
+      return `Stopped loading after ${count(p.rows)} players`;
     case "unresolved":
-      return `Skipped: ${count(g.total - g.resolved)} of ${count(g.total)} names could not be matched to a Minecraft account`;
-    case "missing":
-      return `Skipped: Cubepanion did not return this leaderboard`;
+      return `${count(p.total - p.resolved)} of ${count(p.total)} names unmatched`;
+    case "failed":
+      return p.error;
+    case "crashed":
+      return `Save failed: ${p.error}`;
   }
 }
 
-function count(n: number): string {
-  return n.toLocaleString("en-US");
-}
+const count = (n: number) => n.toLocaleString("en-US");
 
-function full(date: Date): string {
-  return `<t:${seconds(date)}:F>`;
-}
-
-function relative(date: Date): string {
-  return `<t:${seconds(date)}:R>`;
-}
-
-function seconds(date: Date): number {
-  return Math.floor(date.getTime() / 1000);
-}
-
+// The stack is in the logs; the post only needs to say what went wrong.
 function formatError(error: unknown): string {
-  const text = error instanceof Error ? errorText(error) : String(error);
-  return text.length > 1000 ? `${text.slice(0, 1000)}…` : text;
+  return truncate(error instanceof Error ? error.message : String(error), 1000);
 }
 
-/** Bun does not always prefix the stack with the message. */
-function errorText(error: Error): string {
-  const stack = error.stack ?? "";
-  return stack.includes(error.message)
-    ? stack
-    : `${error.message}\n${stack}`.trim();
-}
+const truncate = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
-function codeBlock(text: string): string {
-  return `\`\`\`\n${text}\n\`\`\``;
-}
+const codeBlock = (text: string) => `\`\`\`\n${text}\n\`\`\``;
