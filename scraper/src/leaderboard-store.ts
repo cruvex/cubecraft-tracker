@@ -167,15 +167,16 @@ function normalizeUuid(uuid: string): string {
   return uuid.replace(/-/g, "").toLowerCase();
 }
 
+// A recycled name has rows for several owners; the newest row (uuidv7 ids sort by time) is its current one.
 async function getCachedPlayers(igns: string[]): Promise<PlayerProfile[]> {
   const res = await Bun.sql`
-    SELECT DISTINCT ON (player_uuid)
+    SELECT DISTINCT ON (player_ign)
         id,
         player_ign AS ign,
         player_uuid AS uuid
     FROM ign_history
     WHERE player_ign IN ${Bun.sql(igns)}
-    ORDER BY player_uuid, id
+    ORDER BY player_ign, id DESC
   `;
 
   const parsed = z.array(PlayerProfileSchema).safeParse(res);
