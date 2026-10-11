@@ -150,7 +150,8 @@ export async function openGamesMenu(bot: Bot): Promise<Window> {
   throw new Error("The Games menu did not open");
 }
 
-const playersPattern = /Players:\s*([\d,]+)/i;
+// A game with one player reads "Player: 1".
+const playersPattern = /Players?:\s*([\d,]+)/i;
 
 /** Every game in the Games menu with its live "Players: N" count. */
 export function readGameCounts(window: Window): { name: string; players: number }[] {
