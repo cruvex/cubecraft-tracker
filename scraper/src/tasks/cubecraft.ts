@@ -115,7 +115,11 @@ async function saveBoardSafely(board: Board, signal: AbortSignal): Promise<Board
     // A timeout or shutdown is the whole run's failure, not this board's.
     signal.throwIfAborted();
 
-    console.error(`[cubecraft] ${board.game.displayName}: saving the board failed`, err);
+    // A DOMException (a request timing out) logs as a wall of error-code constants, so only its message.
+    console.error(
+      `[cubecraft] ${board.game.displayName}: saving the board failed`,
+      err instanceof DOMException ? `${err.name}: ${err.message}` : err,
+    );
     return {
       game: board.game.displayName,
       status: "crashed",
