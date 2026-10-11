@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const mojangBaseUrl = "https://api.mojang.com";
 const requestTimeoutMs = 10_000;
+const rateLimitRetries = 2;
 
 export type BoardRow = {
   position: number;
@@ -220,11 +221,27 @@ async function fetchPlayerProfiles(
   igns: string[],
   signal: AbortSignal,
 ): Promise<PlayerProfile[]> {
-  const res = await fetch(`${mojangBaseUrl}/profiles/minecraft`, {
-    method: "POST",
-    body: JSON.stringify(igns),
-    signal: AbortSignal.any([signal, AbortSignal.timeout(requestTimeoutMs)]),
-  });
+  let res: Response;
+  for (let attempt = 1; ; attempt++) {
+    res = await fetch(`${mojangBaseUrl}/profiles/minecraft`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(igns),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(requestTimeoutMs)]),
+    });
+    if (res.status !== 429 || attempt === rateLimitRetries + 1) break;
+
+    // Rate limited: back off 2s, then 4s.
+    await Bun.sleep(2_000 * attempt);
+    signal.throwIfAborted();
+  }
+
+  // Mojang's errors, a 429 included, can come back as an HTML page, which res.json() cannot read.
+  if (!res.ok) {
+    const body = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 120);
+    throw new Error(`Mojang name lookup returned ${res.status}${body ? `: ${body}` : ""}`);
+  }
+
   const json = await res.json();
 
   const mapped = json.map((profile: { name: string; id: string }) => ({
