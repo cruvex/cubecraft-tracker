@@ -61,7 +61,8 @@ export type ScoreChange = {
   to: number;
 };
 
-// Extends a player's period to `readAt` if they were on the previous read with the same score and position, else starts a new one.
+// A player on the previous read with the same score and position keeps their open period; any other open period
+// ends at the previous read, and the player starts a new one.
 export async function savePlayerScores(
   gameId: number,
   readAt: Date,
@@ -80,19 +81,21 @@ export async function savePlayerScores(
   }
 
   const changes = await sql.begin(async (tx) => {
-    const previous: PreviousReading[] = await tx`
-      SELECT player::text AS player, score, position, last_seen
-      FROM player_scores
-      WHERE game_id = ${gameId}
-        AND last_seen = (SELECT MAX(last_seen) FROM player_scores WHERE game_id = ${gameId})
+    const [{ last_read_at: previousReadAt }] = await tx`
+      SELECT last_read_at FROM games WHERE id = ${gameId} FOR UPDATE
     `;
 
     // This read, or a newer one, is already recorded: a re-run or an out-of-order import.
-    if (previous.length > 0 && previous[0]!.last_seen >= readAt) return [];
+    if (previousReadAt && previousReadAt >= readAt) return [];
+
+    const previous: PreviousReading[] = await tx`
+      SELECT player::text AS player, score, position
+      FROM player_scores
+      WHERE game_id = ${gameId} AND last_seen IS NULL
+    `;
 
     const previousByPlayer = new Map(previous.map((p) => [normalizeUuid(p.player), p]));
 
-    const extended: string[] = [];
     const started: PlayerScoreRow[] = [];
     const changes: ScoreChange[] = [];
 
@@ -100,34 +103,28 @@ export async function savePlayerScores(
       const prev = previousByPlayer.get(player);
 
       if (prev && prev.score === row.score && prev.position === row.position) {
-        extended.push(player);
+        previousByPlayer.delete(player);
       } else {
-        started.push({
-          game_id: gameId,
-          player,
-          score: row.score,
-          position: row.position,
-          first_seen: readAt,
-          last_seen: readAt,
-        });
+        started.push({ game_id: gameId, player, score: row.score, position: row.position, first_seen: readAt });
         changes.push({ ign: row.player, from: prev?.score ?? null, to: row.score });
       }
     }
 
-    // The subquery runs before the update, so it still finds the previous read.
-    if (extended.length > 0) {
+    // Left over: open periods this read did not continue.
+    const ended = [...previousByPlayer.keys()];
+    if (ended.length > 0) {
       await tx`
         UPDATE player_scores
-        SET last_seen = ${readAt}
-        WHERE game_id = ${gameId}
-          AND player IN ${tx(extended)}
-          AND last_seen = (SELECT MAX(last_seen) FROM player_scores WHERE game_id = ${gameId})
+        SET last_seen = ${previousReadAt}
+        WHERE game_id = ${gameId} AND player IN ${tx(ended)} AND last_seen IS NULL
       `;
     }
 
     if (started.length > 0) {
       await tx`INSERT INTO player_scores ${tx(started)}`;
     }
+
+    await tx`UPDATE games SET last_read_at = ${readAt} WHERE id = ${gameId}`;
 
     return changes;
   });
@@ -274,14 +271,12 @@ type PlayerScoreRow = {
   score: number;
   position: number;
   first_seen: Date;
-  last_seen: Date;
 };
 
 type PreviousReading = {
   player: string;
   score: number;
   position: number;
-  last_seen: Date;
 };
 
 type PlayerTextureRow = {

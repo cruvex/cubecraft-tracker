@@ -46,9 +46,10 @@ function gainsCte(gameId: number) {
               (array_agg(p.score ORDER BY p.first_seen))[1]
             ) AS score_gain
       FROM player_scores p
+      JOIN games ON games.id = p.game_id
       CROSS JOIN bounds b
       WHERE p.game_id = ${gameId}
-        AND p.last_seen >= b.carry_start
+        AND (p.last_seen >= b.carry_start OR (p.last_seen IS NULL AND games.last_read_at >= b.carry_start))
         AND p.first_seen < b.stop
       GROUP BY p.player
     )
@@ -117,15 +118,16 @@ export async function getPlayersHistory(uuids: string[], days = 30, gameId: numb
       p.player                        AS uuid,
       pi.player_ign                   AS ign,
       GREATEST(p.first_seen, b.start) AS first_seen,
-      p.last_seen,
+      COALESCE(p.last_seen, games.last_read_at) AS last_seen,
       p.score,
       p.position
     FROM player_scores p
+    JOIN games ON games.id = p.game_id
     CROSS JOIN bounds b
     LEFT JOIN player_igns pi ON pi.player_uuid = p.player
     WHERE p.player IN ${sql(uuids)}
       AND p.game_id = ${gameId}
-      AND p.last_seen >= b.start
+      AND (p.last_seen >= b.start OR (p.last_seen IS NULL AND games.last_read_at >= b.start))
     ORDER BY p.first_seen
   `;
 
@@ -172,7 +174,9 @@ export async function getTopGainerMonths(gameId: number) {
     WITH reads AS (
       SELECT first_seen AT TIME ZONE 'UTC' AS timestamp FROM player_scores WHERE game_id = ${gameId}
       UNION
-      SELECT last_seen AT TIME ZONE 'UTC' FROM player_scores WHERE game_id = ${gameId}
+      SELECT last_seen AT TIME ZONE 'UTC' FROM player_scores WHERE game_id = ${gameId} AND last_seen IS NOT NULL
+      UNION
+      SELECT last_read_at AT TIME ZONE 'UTC' FROM games WHERE id = ${gameId} AND last_read_at IS NOT NULL
     ),
     snaps AS (
       SELECT
@@ -241,30 +245,25 @@ export async function getGames() {
 
 /** Latest read time per game; games without reads are absent. */
 export async function getLastSnapshotTimes(gameIds: number[]): Promise<Map<number, string | null>> {
-  // One lookup per game: each is an index probe, where a GROUP BY would scan the whole table.
-  const times = await Promise.all(
-    gameIds.map(async (gameId) => {
-      const [row] = await sql`SELECT MAX(last_seen) AS at FROM player_scores WHERE game_id = ${gameId}`;
-      return [gameId, iso(row?.at)] as const;
-    }),
-  );
-  return new Map(times.filter(([, at]) => at != null));
+  if (!gameIds.length) return new Map();
+  const rows = await sql`
+    SELECT id, last_read_at FROM games WHERE id IN ${sql(gameIds)} AND last_read_at IS NOT NULL
+  `;
+  return new Map(rows.map((r: any) => [r.id, iso(r.last_read_at)]));
 }
 
 export async function getLeaderboard(gameId: string, compareDays: number = 30) {
   // The comparison board is the latest one at least `compareDays` old: the board only changes when a period starts.
   const [times] = await sql`
-    WITH latest AS (
-      SELECT MAX(last_seen) AS at FROM player_scores WHERE game_id = ${gameId}
-    )
     SELECT
-      latest.at AS latest_at,
+      last_read_at AS latest_at,
       (
         SELECT MAX(first_seen) FROM player_scores
         WHERE game_id = ${gameId}
-          AND first_seen <= latest.at - CAST(${compareDays + " days"} AS INTERVAL)
+          AND first_seen <= last_read_at - CAST(${compareDays + " days"} AS INTERVAL)
       ) AS past_at
-    FROM latest
+    FROM games
+    WHERE id = ${gameId}
   `;
 
   if (!times?.latest_at) return { rows: [], departed: [], timestamp: null, compareTimestamp: null };
@@ -274,12 +273,12 @@ export async function getLeaderboard(gameId: string, compareDays: number = 30) {
     WITH cur AS (
       SELECT player, score, position
       FROM player_scores
-      WHERE game_id = ${gameId} AND last_seen = ${times.latest_at}
+      WHERE game_id = ${gameId} AND last_seen IS NULL
     ),
     past AS (
       SELECT player, score, position
       FROM player_scores
-      WHERE game_id = ${gameId} AND first_seen <= ${times.past_at} AND last_seen >= ${times.past_at}
+      WHERE game_id = ${gameId} AND first_seen <= ${times.past_at} AND (last_seen IS NULL OR last_seen >= ${times.past_at})
     )
     SELECT
       COALESCE(cur.player, past.player) AS player,
@@ -360,24 +359,26 @@ async function playerScores(uuid: string, bounds: ReturnType<typeof lastDays>, g
 
   // The periods in the bounds plus the one the start carries from, clamped so a score held into the bounds reads from the start.
   const periods = await sql`
-    WITH ${bounds}
+    WITH ${bounds},
+    player_periods AS (
+      SELECT p.first_seen, COALESCE(p.last_seen, games.last_read_at) AS last_seen, p.score, p.position
+      FROM player_scores p
+      JOIN games ON games.id = p.game_id
+      WHERE p.game_id = ${gameId} AND p.player = ${uuid}
+    )
     SELECT
       GREATEST(p.first_seen, LEAST(p.last_seen, b.start)) AS first_seen,
       LEAST(p.last_seen, b.stop)                          AS last_seen,
       p.score,
       p.position
-    FROM player_scores p
+    FROM player_periods p
     CROSS JOIN bounds b
-    WHERE p.game_id = ${gameId}
-      AND p.player = ${uuid}
-      AND p.first_seen < b.stop
+    WHERE p.first_seen < b.stop
       AND (
         p.last_seen >= b.start
         OR p.first_seen = (
-          SELECT MAX(q.first_seen) FROM player_scores q
-          WHERE q.game_id = p.game_id
-            AND q.player = p.player
-            AND q.first_seen <= b.start
+          SELECT MAX(q.first_seen) FROM player_periods q
+          WHERE q.first_seen <= b.start
             AND q.last_seen >= b.carry_start
         )
       )
