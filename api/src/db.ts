@@ -1,3 +1,5 @@
+import { sql } from "./sql";
+
 function iso(value: unknown) {
   if (value == null) return null;
   return value instanceof Date ? value.toISOString() : String(value);
@@ -8,7 +10,7 @@ const CARRY_WINDOW = "3 days";
 
 // CTE `bounds`: the last `days` days; only readings inside them count.
 function lastDays(days: number) {
-  return Bun.sql`
+  return sql`
     bounds AS (
       SELECT start, start AS carry_start, CAST('infinity' AS timestamptz) AS stop
       FROM (SELECT NOW() - CAST(${days + " days"} AS INTERVAL) AS start) s
@@ -21,7 +23,7 @@ function periodBounds(period: string) {
   const isYear = period.length === 4;
   const start = isYear ? `${period}-01-01` : `${period}-01`;
   const length = isYear ? "1 year" : "1 month";
-  return Bun.sql`
+  return sql`
     bounds AS (
       SELECT
         start_utc AT TIME ZONE 'UTC'                                       AS start,
@@ -34,7 +36,7 @@ function periodBounds(period: string) {
 
 // CTE `gains` (after `bounds`): each player's last score minus their last score from before the start, or else their first after it.
 function gainsCte(gameId: number) {
-  return Bun.sql`
+  return sql`
     gains AS (
       SELECT
         p.player,
@@ -74,7 +76,7 @@ export function getTopGainersForPeriod(period: string, gameId: number) {
 }
 
 async function topGainers(bounds: ReturnType<typeof lastDays>, gameId: number) {
-  const res = await Bun.sql`
+  const res = await sql`
     WITH ${bounds}, ${gainsCte(gameId)},
     player_igns AS (
         SELECT DISTINCT ON (player_uuid)
@@ -104,7 +106,7 @@ async function topGainers(bounds: ReturnType<typeof lastDays>, gameId: number) {
 export async function getPlayersHistory(uuids: string[], days = 30, gameId: number) {
   if (!uuids.length) return [];
 
-  const res = await Bun.sql`
+  const res = await sql`
     WITH ${lastDays(days)},
     player_igns AS (
       SELECT DISTINCT ON (player_uuid) player_uuid, player_ign
@@ -121,7 +123,7 @@ export async function getPlayersHistory(uuids: string[], days = 30, gameId: numb
     FROM player_scores p
     CROSS JOIN bounds b
     LEFT JOIN player_igns pi ON pi.player_uuid = p.player
-    WHERE p.player IN ${Bun.sql(uuids)}
+    WHERE p.player IN ${sql(uuids)}
       AND p.game_id = ${gameId}
       AND p.last_seen >= b.start
     ORDER BY p.first_seen
@@ -151,7 +153,7 @@ export async function getPlayersHistory(uuids: string[], days = 30, gameId: numb
 
 /** Default seed for the comparison chart: top-N gainers, then their histories via getPlayersHistory. */
 export async function getTopGainersHistory(days = 30, gameId: number, limit = 10) {
-  const gainers = await Bun.sql`
+  const gainers = await sql`
     WITH ${lastDays(days)}, ${gainsCte(gameId)}
     SELECT player AS uuid
     FROM gains
@@ -166,7 +168,7 @@ export async function getTopGainersHistory(days = 30, gameId: number, limit = 10
 
 /** Every month from the game's first read to now, newest first, with how much of each month was tracked. */
 export async function getTopGainerMonths(gameId: number) {
-  const res = await Bun.sql`
+  const res = await sql`
     WITH reads AS (
       SELECT first_seen AT TIME ZONE 'UTC' AS timestamp FROM player_scores WHERE game_id = ${gameId}
       UNION
@@ -222,7 +224,7 @@ export async function getTopGainerMonths(gameId: number) {
 }
 
 export async function getGames() {
-  const rows = await Bun.sql`
+  const rows = await sql`
     SELECT id, name, display_name, active, score_type
     FROM games
     ORDER BY name
@@ -242,7 +244,7 @@ export async function getLastSnapshotTimes(gameIds: number[]): Promise<Map<numbe
   // One lookup per game: each is an index probe, where a GROUP BY would scan the whole table.
   const times = await Promise.all(
     gameIds.map(async (gameId) => {
-      const [row] = await Bun.sql`SELECT MAX(last_seen) AS at FROM player_scores WHERE game_id = ${gameId}`;
+      const [row] = await sql`SELECT MAX(last_seen) AS at FROM player_scores WHERE game_id = ${gameId}`;
       return [gameId, iso(row?.at)] as const;
     }),
   );
@@ -251,7 +253,7 @@ export async function getLastSnapshotTimes(gameIds: number[]): Promise<Map<numbe
 
 export async function getLeaderboard(gameId: string, compareDays: number = 30) {
   // The comparison board is the latest one at least `compareDays` old: the board only changes when a period starts.
-  const [times] = await Bun.sql`
+  const [times] = await sql`
     WITH latest AS (
       SELECT MAX(last_seen) AS at FROM player_scores WHERE game_id = ${gameId}
     )
@@ -268,7 +270,7 @@ export async function getLeaderboard(gameId: string, compareDays: number = 30) {
   if (!times?.latest_at) return { rows: [], departed: [], timestamp: null, compareTimestamp: null };
 
   // Current + past boards and IGN in one shot; departed players sort last via NULLS LAST on cur.position.
-  const allRows = await Bun.sql`
+  const allRows = await sql`
     WITH cur AS (
       SELECT player, score, position
       FROM player_scores
@@ -330,7 +332,7 @@ export async function getLeaderboard(gameId: string, compareDays: number = 30) {
 
 
 async function getIgnByUuid(uuid: string): Promise<string | null> {
-  const [row] = await Bun.sql`
+  const [row] = await sql`
     SELECT player_ign
     FROM ign_history
     WHERE player_uuid = ${uuid}
@@ -357,7 +359,7 @@ async function playerScores(uuid: string, bounds: ReturnType<typeof lastDays>, g
   if (!ign) return null;
 
   // The periods in the bounds plus the one the start carries from, clamped so a score held into the bounds reads from the start.
-  const periods = await Bun.sql`
+  const periods = await sql`
     WITH ${bounds}
     SELECT
       GREATEST(p.first_seen, LEAST(p.last_seen, b.start)) AS first_seen,
@@ -382,7 +384,7 @@ async function playerScores(uuid: string, bounds: ReturnType<typeof lastDays>, g
     ORDER BY p.first_seen
   `;
 
-  const [latest] = await Bun.sql`
+  const [latest] = await sql`
     SELECT score, position
     FROM player_scores
     WHERE game_id = ${gameId} AND player = ${uuid}
@@ -404,7 +406,7 @@ async function playerScores(uuid: string, bounds: ReturnType<typeof lastDays>, g
 
 /** Per-game readings bucketed to their LAST value — an average would invent counts never observed. */
 export async function getGamePopulation(gameId: number, hours = 24, bucketSeconds = 300) {
-  const buckets = await Bun.sql`
+  const buckets = await sql`
     WITH readings AS (
       SELECT
         to_timestamp(
@@ -425,7 +427,7 @@ export async function getGamePopulation(gameId: number, hours = 24, bucketSecond
     ORDER BY bucket, timestamp DESC
   `;
 
-  const [latest] = await Bun.sql`
+  const [latest] = await sql`
     SELECT timestamp, players
     FROM game_player_counts
     WHERE game_id = ${gameId}
@@ -458,9 +460,9 @@ export async function getGamePopulation(gameId: number, hours = 24, bucketSecond
 
 /** Bucket-averaged: a clocked one-ping-a-minute series, so an empty bucket is a failed poll, not a hold. */
 export async function getServerPopulation(hours = 24, bucketSeconds = 300, timeZone = "UTC") {
-  const window = Bun.sql`NOW() - CAST(${hours + " hours"} AS INTERVAL)`;
+  const window = sql`NOW() - CAST(${hours + " hours"} AS INTERVAL)`;
 
-  const buckets = await Bun.sql`
+  const buckets = await sql`
     SELECT
       to_timestamp(
         floor(extract(epoch FROM timestamp) / ${bucketSeconds}) * ${bucketSeconds}
@@ -473,7 +475,7 @@ export async function getServerPopulation(hours = 24, bucketSeconds = 300, timeZ
   `;
 
   // Read off the raw rows, so the chosen bucket width never moves them.
-  const [aggregate] = await Bun.sql`
+  const [aggregate] = await sql`
     SELECT MAX(online)::int AS peak, ROUND(AVG(online))::int AS average
     FROM server_player_counts
     WHERE timestamp >= ${window}
@@ -481,7 +483,7 @@ export async function getServerPopulation(hours = 24, bucketSeconds = 300, timeZ
 
   // Same bucket width, but keyed on local time of day across 30 days, so the chart can
   // draw what a given clock time usually looks like beside what it did this time.
-  const typicalRows = await Bun.sql`
+  const typicalRows = await sql`
     SELECT
       FLOOR(
         EXTRACT(epoch FROM (timestamp AT TIME ZONE ${timeZone})::time) / ${bucketSeconds}
@@ -534,14 +536,14 @@ function smoothProfile(values: (number | null)[], radius: number) {
 
 /** Newest reading plus the version range in force, for the live status card. */
 export async function getServerStatus() {
-  const [latest] = await Bun.sql`
+  const [latest] = await sql`
     SELECT timestamp, online, max
     FROM server_player_counts
     ORDER BY timestamp DESC
     LIMIT 1
   `;
 
-  const [version] = await Bun.sql`
+  const [version] = await sql`
     SELECT observed_at, minimum, maximum, raw
     FROM server_versions
     ORDER BY observed_at DESC
@@ -569,7 +571,7 @@ export async function getServerStatus() {
 
 /** Average online per hour of day, bucketed in `timeZone` so DST and half-hour offsets hold. */
 export async function getActiveHours(days = 30, timeZone = "UTC") {
-  const rows = await Bun.sql`
+  const rows = await sql`
     SELECT
       EXTRACT(hour FROM timestamp AT TIME ZONE ${timeZone})::int AS hour,
       ROUND(AVG(online))::int AS average,
@@ -602,19 +604,19 @@ export async function getActiveHours(days = 30, timeZone = "UTC") {
 /** Batch IGN->UUID (case-insensitive, latest wins); map keyed by lowercased IGN, misses absent. */
 export async function getUuidsByIgns(igns: string[]): Promise<Map<string, string>> {
   if (!igns.length) return new Map();
-  const res = await Bun.sql`
+  const res = await sql`
     SELECT DISTINCT ON (LOWER(player_ign))
       LOWER(player_ign) AS ign,
       player_uuid
     FROM ign_history
-    WHERE LOWER(player_ign) IN ${Bun.sql(igns.map((i) => i.toLowerCase()))}
+    WHERE LOWER(player_ign) IN ${sql(igns.map((i) => i.toLowerCase()))}
     ORDER BY LOWER(player_ign), id DESC
   `;
   return new Map((res || []).map((r: any) => [r.ign, r.player_uuid]));
 }
 
 export async function getUuidByIgn(ign: string): Promise<string | null> {
-  const res = await Bun.sql`
+  const res = await sql`
     SELECT player_uuid
     FROM ign_history
     WHERE player_ign ILIKE ${ign}
@@ -628,7 +630,7 @@ export async function getUuidByIgn(ign: string): Promise<string | null> {
 export async function searchPlayers(query: string): Promise<{ uuid: string; ign: string }[]> {
   const contains = `%${query}%`;
   const starts = `${query}%`;
-  const res = await Bun.sql`
+  const res = await sql`
     SELECT player_uuid, player_ign FROM (
       SELECT DISTINCT ON (player_uuid) player_uuid, player_ign
       FROM public.ign_history

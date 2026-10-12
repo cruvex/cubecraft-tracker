@@ -1,3 +1,4 @@
+import { sql } from "../sql";
 import { scrapeCubeCraft, type Board, type ScrapeResult } from "../cubecraft/scrape";
 import { loadGames } from "../games";
 import { resolvePlayerUUIDs, savePlayerScores } from "../leaderboard-store";
@@ -71,8 +72,8 @@ async function saveCounts({ countsReadAt, counts }: ScrapeResult) {
   const timestamp = new Date(countsReadAt);
   timestamp.setMilliseconds(0);
 
-  await Bun.sql`
-    INSERT INTO game_player_counts ${Bun.sql(
+  await sql`
+    INSERT INTO game_player_counts ${sql(
       counts.map(({ gameId, players }) => ({ timestamp, game_id: gameId, players })),
     )}
     ON CONFLICT (game_id, timestamp) DO NOTHING
@@ -88,8 +89,8 @@ async function saveRun(startedAt: Date, durationMs: number, { boards, ...rest }:
     // The game names are left out, as the games table has them.
     const details = { ...rest, ...(boards && { boards: boards.map(({ game, ...board }) => board) }) };
 
-    await Bun.sql`
-      INSERT INTO scrape_runs ${Bun.sql({
+    await sql`
+      INSERT INTO scrape_runs ${sql({
         started_at: startedAt,
         duration_ms: Math.round(durationMs),
         status,

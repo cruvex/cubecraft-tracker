@@ -1,3 +1,4 @@
+import { sql } from "../sql";
 import { ping, stripFormatting } from "../minecraft";
 import type { Task } from "../scheduler";
 
@@ -21,7 +22,7 @@ export const serverStatus: Task = {
   async run({ firedAt, signal }) {
     const { players, version } = await ping(host, port, signal, unsupportedProtocol);
 
-    await Bun.sql`
+    await sql`
       INSERT INTO server_player_counts (timestamp, online, max)
       VALUES (${truncateToSecond(firedAt)}, ${players.online}, ${players.max})
       ON CONFLICT (timestamp) DO NOTHING
@@ -51,7 +52,7 @@ async function recordVersionRange(firedAt: Date, name: string): Promise<void> {
   const [, minimum, maximum] = match;
 
   // Only transitions earn a row; the range changes a few times a year.
-  const inserted = await Bun.sql`
+  const inserted = await sql`
     INSERT INTO server_versions (observed_at, minimum, maximum, raw)
     SELECT ${firedAt}, ${minimum}, ${maximum}, ${raw}
     WHERE NOT EXISTS (

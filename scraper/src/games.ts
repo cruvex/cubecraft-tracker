@@ -1,3 +1,5 @@
+import { sql } from "./sql";
+
 // A game on CubeCraft; id is what game_id holds in every table.
 export type Game = {
   id: number;
@@ -13,7 +15,7 @@ export type Game = {
 };
 
 export async function loadGames(): Promise<Game[]> {
-  const rows = await Bun.sql`
+  const rows = await sql`
     SELECT id, name, display_name, score_type, active, has_leaderboard, menu_name
     FROM games
     ORDER BY id

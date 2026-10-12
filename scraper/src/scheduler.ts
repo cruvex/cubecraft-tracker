@@ -132,7 +132,7 @@ export class Scheduler {
     update(state, { status: "running", lastRunAt: firedAt.toISOString() });
     console.log(`[${task.name}] started`);
 
-    // Raced rather than left to the signal: Bun.sql ignores it. Rejection becomes a value to stay handled.
+    // Raced rather than left to the signal: Bun's SQL client ignores it. Rejection becomes a value to stay handled.
     const work: Promise<Outcome> = task.run({ firedAt, signal }).then(
       () => ({ ran: true, error: null }),
       (error: unknown) => ({ ran: true, error: error ?? new Error(`${task.name} rejected`) }),

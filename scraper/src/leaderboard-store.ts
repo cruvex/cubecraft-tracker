@@ -1,3 +1,4 @@
+import { sql } from "./sql";
 import { z } from "zod";
 
 const mojangBaseUrl = "https://api.mojang.com";
@@ -78,7 +79,7 @@ export async function savePlayerScores(
     board.set(player, row);
   }
 
-  const changes = await Bun.sql.begin(async (tx) => {
+  const changes = await sql.begin(async (tx) => {
     const previous: PreviousReading[] = await tx`
       SELECT player::text AS player, score, position, last_seen
       FROM player_scores
@@ -153,8 +154,8 @@ async function savePlayerTextures(
     textures.set(player, { player_uuid: player, texture: row.texture, updated_at: timestamp });
   }
 
-  await Bun.sql`
-    INSERT INTO player_textures ${Bun.sql([...textures.values()])}
+  await sql`
+    INSERT INTO player_textures ${sql([...textures.values()])}
     ON CONFLICT (player_uuid) DO UPDATE
       SET texture    = EXCLUDED.texture,
           updated_at = EXCLUDED.updated_at
@@ -170,13 +171,13 @@ function normalizeUuid(uuid: string): string {
 
 // A recycled name has rows for several owners; the newest row (uuidv7 ids sort by time) is its current one.
 async function getCachedPlayers(igns: string[]): Promise<PlayerProfile[]> {
-  const res = await Bun.sql`
+  const res = await sql`
     SELECT DISTINCT ON (player_ign)
         id,
         player_ign AS ign,
         player_uuid AS uuid
     FROM ign_history
-    WHERE player_ign IN ${Bun.sql(igns)}
+    WHERE player_ign IN ${sql(igns)}
     ORDER BY player_ign, id DESC
   `;
 
@@ -197,8 +198,8 @@ async function insertCachedPlayers(players: PlayerProfile[]): Promise<void> {
     player_uuid: player.uuid,
   }));
 
-  await Bun.sql`
-    INSERT INTO ign_history ${Bun.sql(mappedPlayers)}
+  await sql`
+    INSERT INTO ign_history ${sql(mappedPlayers)}
   `;
 }
 
