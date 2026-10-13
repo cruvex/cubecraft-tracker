@@ -4,13 +4,16 @@ const baseUrl = "https://cubepanion.ameliah.art";
 const submitterUuid = process.env.CUBEPANION_SUBMITTER_UUID;
 const apiKey = process.env.CUBEPANION_API_KEY;
 
-// The UTC hour each game's board was last submitted in, e.g. "2026-10-13T12".
+// UTC hour of each game's last board submission, e.g. "2026-10-13T12".
 const submittedHour = new Map<number, string>();
+
+// Counts as submitted, so boards start on the next hour after a deploy.
+const startHour = new Date().toISOString().slice(0, 13);
 
 // errors maps what failed ("player counts" or a game) to why.
 export type CubepanionRun = { boards: number[]; errors?: Record<string, string> };
 
-/** The player counts every run, and each complete board once per clock hour; undefined when submitting is off. */
+/** Counts every run, complete boards once per clock hour; undefined when submitting is off. */
 export async function submitToCubepanion(result: ScrapeResult, signal: AbortSignal): Promise<CubepanionRun | undefined> {
   if (!submitterUuid || !apiKey) return undefined;
 
@@ -45,7 +48,7 @@ export async function submitToCubepanion(result: ScrapeResult, signal: AbortSign
 
     const gameId = board.game.id;
     const hour = board.readAt.toISOString().slice(0, 13);
-    if (submittedHour.get(gameId) === hour) continue;
+    if ((submittedHour.get(gameId) ?? startHour) === hour) continue;
 
     const entries = board.rows.map(({ position, player, score, texture }) => ({ gameId, position, score, player, texture }));
 
@@ -62,7 +65,7 @@ async function post(path: string, body: unknown, signal: AbortSignal): Promise<v
   const url = new URL(path, baseUrl);
   url.searchParams.set("api-key", apiKey!);
 
-  // Errors name only the path, so the key never reaches the logs, scrape_runs or Discord.
+  // Errors name only the path, keeping the key out of logs.
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "User-Agent": "CubeCraftPlus-scraper" },
