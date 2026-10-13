@@ -11,9 +11,9 @@ const submittedHour = new Map<number, string>();
 const startHour = new Date().toISOString().slice(0, 13);
 
 // errors maps what failed ("player counts" or a game) to why.
-export type CubepanionRun = { boards: number[]; errors?: Record<string, string> };
+export type CubepanionRun = { boards?: number[]; errors?: Record<string, string> };
 
-/** Counts every run, complete boards once per clock hour; undefined when submitting is off. */
+/** Counts every run, complete boards once per clock hour; undefined when no board went and nothing failed. */
 export async function submitToCubepanion(result: ScrapeResult, signal: AbortSignal): Promise<CubepanionRun | undefined> {
   if (!submitterUuid || !apiKey) return undefined;
 
@@ -58,7 +58,11 @@ export async function submitToCubepanion(result: ScrapeResult, signal: AbortSign
     }
   }
 
-  return { boards, ...(Object.keys(errors).length > 0 && { errors }) };
+  const run: CubepanionRun = {};
+  if (boards.length > 0) run.boards = boards;
+  if (Object.keys(errors).length > 0) run.errors = errors;
+
+  return Object.keys(run).length > 0 ? run : undefined;
 }
 
 async function post(path: string, body: unknown, signal: AbortSignal): Promise<void> {

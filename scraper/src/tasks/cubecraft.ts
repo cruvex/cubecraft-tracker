@@ -71,13 +71,14 @@ async function scrapeAndSave(signal: AbortSignal, details: RunDetails) {
   console.log(`${result.counts.length} player counts, ${saved} of ${boards.length} boards changed`);
 
   // A failure there does not make the run degraded: our own data is saved by then.
-  details.cubepanion = await submitToCubepanion(result, signal);
+  const cubepanion = await submitToCubepanion(result, signal);
+  if (cubepanion) details.cubepanion = cubepanion;
 
   await sendReport({
     kind: "run",
     boards,
     unmappedGames: result.unmappedGames,
-    cubepanionErrors: details.cubepanion?.errors ?? {},
+    cubepanionErrors: cubepanion?.errors ?? {},
   });
 }
 
