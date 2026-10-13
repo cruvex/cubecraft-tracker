@@ -1,5 +1,5 @@
 import { gameMatcher, type Game } from "../games";
-import { connect } from "./connection";
+import { connect, kickText } from "./connection";
 import {
   openGamesMenu,
   readGameCounts,
@@ -31,7 +31,8 @@ let menuLogged = false;
  * One login: read every game's player count off the Games menu, then open the
  * leaderboard of each active game that has one in turn. A board that fails is
  * reported and the rest carry on; only failing to log in or to open the Games
- * menu throws.
+ * menu throws. Losing the connection fails the boards still to read, and keeps
+ * what was read before it.
  */
 export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promise<ScrapeResult> {
   const gameOf = gameMatcher(games);
@@ -43,8 +44,27 @@ export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promi
   const onAbort = () => bot.quit();
   signal.addEventListener("abort", onAbort, { once: true });
 
+  // Only "end" means the connection is gone: an "error" can be a packet that did
+  // not parse, after which the connection carries on. A kick comes just before its end.
+  const connection: { lost: string | null } = { lost: null };
+  let kickReason: string | null = null;
+  const onKicked = (reason: unknown) => {
+    kickReason = kickText(reason);
+  };
+  const onEnd = (reason: string) => {
+    connection.lost = kickReason ? `Kicked: ${kickReason}` : `Disconnected: ${reason}`;
+    console.warn(`[cubecraft] ${connection.lost}`);
+  };
+  bot.once("kicked", onKicked);
+  bot.once("end", onEnd);
+
   try {
-    const menu = await openGamesMenu(bot);
+    let menu: Window;
+    try {
+      menu = await openGamesMenu(bot);
+    } catch (err) {
+      throw connection.lost ? new Error(connection.lost) : err;
+    }
     const countsReadAt = new Date();
 
     const counts: ScrapeResult["counts"] = [];
@@ -90,22 +110,40 @@ export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promi
       // one-off on the server's side.
       for (let attempt = 1; attempt <= 2; attempt++) {
         signal.throwIfAborted();
+
+        // A board cut short by the connection going says so, not that it stopped early or failed to open.
+        const lost = (): Board => ({ game, readAt: new Date(), attempts: attempt, ok: false, error: connection.lost! });
+
+        if (connection.lost) {
+          board = lost();
+          break;
+        }
+
         try {
           const { rows, complete } = await scrapeLeaderboard(bot, await gamesMenu(), isGame(game));
-          board = { game, readAt: new Date(), attempts: attempt, ok: true, rows, complete };
+          board = complete || !connection.lost
+            ? { game, readAt: new Date(), attempts: attempt, ok: true, rows, complete }
+            : lost();
           if (complete) break;
         } catch (err) {
-          board = { game, readAt: new Date(), attempts: attempt, ok: false, error: describe(err) };
+          board = connection.lost ? lost() : { game, readAt: new Date(), attempts: attempt, ok: false, error: describe(err) };
         }
+
+        if (connection.lost) break;
         console.warn(`[cubecraft] ${game.displayName} attempt ${attempt} did not read cleanly`);
       }
 
       boards.push(board!);
     }
 
+    // The abort quits the bot, which reads as a lost connection; the boards it cut short are not this run's result.
+    signal.throwIfAborted();
+
     return { countsReadAt, counts, missingCounts: missing.map((g) => g.id), unmappedGames, boards };
   } finally {
     signal.removeEventListener("abort", onAbort);
+    bot.removeListener("kicked", onKicked);
+    bot.removeListener("end", onEnd);
     bot.quit();
   }
 }

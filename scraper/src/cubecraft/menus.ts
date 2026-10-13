@@ -88,7 +88,8 @@ const entries = (window: Window): string[] =>
  * its window.
  *
  * Resolves with the menu. On timeout, resolves with the last window that opened
- * so the caller can say what it holds, or null if none did.
+ * so the caller can say what it holds, or null if none did. Once the connection
+ * is gone no menu can come, so that settles at once the same way.
  */
 function waitForMenu(
   bot: Bot,
@@ -96,6 +97,8 @@ function waitForMenu(
   ready: (window: Window) => boolean,
   maxMs = menuTimeoutMs,
 ): Promise<Window | null> {
+  if (bot._client.ended) return Promise.resolve(null);
+
   return new Promise((resolve) => {
     let window: Window | null = null;
     const deadline = setTimeout(settle, maxMs);
@@ -112,11 +115,13 @@ function waitForMenu(
     function settle() {
       clearTimeout(deadline);
       bot.removeListener("windowOpen", onOpen);
+      bot.removeListener("end", settle);
       window?.removeListener("updateSlot", check);
       resolve(window);
     }
 
     bot.on("windowOpen", onOpen);
+    bot.on("end", settle);
     trigger();
   });
 }
@@ -142,7 +147,7 @@ export async function openGamesMenu(bot: Bot): Promise<Window> {
   // Ready once it lists a game, which is any entry with a player count.
   const listsGames = (window: Window) => readGameCounts(window).length > 0;
 
-  for (let attempt = 1; attempt <= gamesMenuAttempts; attempt++) {
+  for (let attempt = 1; attempt <= gamesMenuAttempts && !bot._client.ended; attempt++) {
     const window = await waitForMenu(bot, useGames, listsGames, gamesMenuAttemptMs);
     if (window && listsGames(window)) return window;
   }
