@@ -65,7 +65,7 @@ async function post(path: string, body: unknown, signal: AbortSignal): Promise<v
   // Errors name only the path, so the key never reaches the logs, scrape_runs or Discord.
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "User-Agent": "CubeCraftPlus-scraper" },
     body: JSON.stringify(body),
     signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
   });
