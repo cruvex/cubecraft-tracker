@@ -23,7 +23,7 @@ export type BoardReport = { game: string } & (
 type Problem = Exclude<BoardReport, { status: "saved" | "unchanged" }>;
 
 export type RunReport =
-  | { kind: "run"; boards: BoardReport[]; unmappedGames: string[] }
+  | { kind: "run"; boards: BoardReport[]; unmappedGames: string[]; cubepanionErrors: Record<string, string> }
   | { kind: "failed"; error: unknown };
 
 // What the last post said was wrong; in memory, so a restart with a problem ongoing posts it again.
@@ -65,6 +65,7 @@ function problemKey(report: RunReport): string {
   return [
     ...problemsOf(report.boards).map((b) => `${b.game}:${b.status}`),
     ...report.unmappedGames.map((name) => `unmapped:${name}`),
+    ...Object.keys(report.cubepanionErrors).map((what) => `cubepanion:${what}`),
   ]
     .sort()
     .join(",");
@@ -85,17 +86,21 @@ function problemsEmbed(report: Extract<RunReport, { kind: "run" }>) {
   const fine = report.boards.length - problems.length;
   const color = fine > 0 ? yellow : red;
   const unmapped = report.unmappedGames.join(", ");
+  const cubepanion = Object.entries(report.cubepanionErrors).map(([what, error]) => `${what}: ${error}`).join("\n");
 
-  if (problems.length === 0) return { title: "Unmapped menu entries", description: unmapped, color };
+  const others = [];
+  if (unmapped) others.push({ name: "Unmapped menu entries", value: unmapped, inline: false });
+  if (cubepanion) others.push({ name: "Cubepanion submissions failed", value: truncate(cubepanion, 1000), inline: false });
 
-  const fields = problems.map((p) => ({ name: p.game, value: reason(p), inline: false }));
-  if (unmapped) fields.push({ name: "Unmapped menu entries", value: unmapped, inline: false });
+  const fields = [...problems.map((p) => ({ name: p.game, value: reason(p), inline: false })), ...others];
 
   return {
-    title: `${problems.length} leaderboard${problems.length === 1 ? "" : "s"} skipped`,
+    title: problems.length > 0
+      ? `${problems.length} leaderboard${problems.length === 1 ? "" : "s"} skipped`
+      : others.map((f) => f.name).join(", "),
     color,
     fields,
-    ...(fine > 0 && { footer: { text: `${fine} other${fine === 1 ? "" : "s"} fine` } }),
+    ...(problems.length > 0 && fine > 0 && { footer: { text: `${fine} other${fine === 1 ? "" : "s"} fine` } }),
   };
 }
 

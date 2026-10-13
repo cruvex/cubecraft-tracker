@@ -1,5 +1,6 @@
 import { sql } from "../sql";
 import { scrapeCubeCraft, type Board, type ScrapeResult } from "../cubecraft/scrape";
+import { submitToCubepanion, type CubepanionRun } from "../cubepanion";
 import { loadGames } from "../games";
 import { resolvePlayerUUIDs, savePlayerScores } from "../leaderboard-store";
 import { sendReport, type BoardReport } from "../report";
@@ -33,7 +34,13 @@ export const cubecraft: Task = {
 type BoardRun = { gameId: number; attempts: number } & BoardReport;
 
 // What scrape_runs.details holds; a key is there only when it applies.
-type RunDetails = { boards?: BoardRun[]; missingCounts?: number[]; unmapped?: string[]; error?: string };
+type RunDetails = {
+  boards?: BoardRun[];
+  missingCounts?: number[];
+  unmapped?: string[];
+  cubepanion?: CubepanionRun;
+  error?: string;
+};
 
 async function scrapeAndSave(signal: AbortSignal, details: RunDetails) {
   let result: ScrapeResult;
@@ -63,7 +70,15 @@ async function scrapeAndSave(signal: AbortSignal, details: RunDetails) {
   const saved = boards.filter((b) => b.status === "saved").length;
   console.log(`${result.counts.length} player counts, ${saved} of ${boards.length} boards changed`);
 
-  await sendReport({ kind: "run", boards, unmappedGames: result.unmappedGames });
+  // A failure there does not make the run degraded: our own data is saved by then.
+  details.cubepanion = await submitToCubepanion(result, signal);
+
+  await sendReport({
+    kind: "run",
+    boards,
+    unmappedGames: result.unmappedGames,
+    cubepanionErrors: details.cubepanion?.errors ?? {},
+  });
 }
 
 async function saveCounts({ countsReadAt, counts }: ScrapeResult) {
