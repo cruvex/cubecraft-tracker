@@ -1,4 +1,4 @@
-import { getUuidByIgn, getUuidsByIgns, getTopGainers, getTopGainersForPeriod, getTopGainerMonths, getTopGainersHistory, getPlayersHistory, getPlayerScores, getPlayerPeriodScores, getLeaderboard, getLastSnapshotTimes, getGamePopulation, getServerPopulation, getServerStatus, getActiveHours, searchPlayers } from "./db";
+import { getIgnOwner, getUuidsByIgns, getTopGainers, getTopGainersForPeriod, getTopGainerMonths, getTopGainersHistory, getPlayersHistory, getPlayerScores, getPlayerPeriodScores, getPlayerLeaderboards, getLeaderboard, getLastSnapshotTimes, getGamePopulation, getServerPopulation, getServerStatus, getActiveHours, searchPlayers } from "./db";
 import { fetchGames } from "./cubepanion";
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
@@ -23,10 +23,14 @@ function jsonResponse(obj: unknown, status = 200) {
     });
 }
 
-/** Resolve an ID which could be a UUID or an IGN to a UUID. */
-async function resolvePlayerId(id: string): Promise<string | null> {
+/** Resolve an ID which could be a UUID or an IGN to a UUID, plus the IGN's stored spelling. */
+async function resolvePlayer(id: string): Promise<{ uuid: string; ign: string | null } | null> {
     const isUuid = id.length >= 32 && (id.includes("-") || id.length === 32);
-    return isUuid ? id : await getUuidByIgn(id);
+    return isUuid ? { uuid: id, ign: null } : await getIgnOwner(id);
+}
+
+async function resolvePlayerId(id: string): Promise<string | null> {
+    return (await resolvePlayer(id))?.uuid ?? null;
 }
 
 // Route Handlers
@@ -168,6 +172,14 @@ async function handleSearchPlayers(req: Request) {
     return jsonResponse(result);
 }
 
+async function handlePlayerLeaderboards(params: { id: string }) {
+    const owner = await resolvePlayer(params.id);
+    const result = owner ? await getPlayerLeaderboards(owner.uuid) : null;
+    if (!owner || !result) return jsonResponse({ error: "Player not found" }, 404);
+    // The name that was looked up, which may be a past one; `ign` is always the current name.
+    return jsonResponse({ ...result, matchedIgn: owner.ign ?? result.ign });
+}
+
 async function handleLeaderboard (req: Request, params: { gameId: string })  {
     const url = new URL(req.url);
     const days = Number(url.searchParams.get("days") || 30);
@@ -191,6 +203,7 @@ Bun.serve({
         "/api/server/population": handleServerPopulation,
         "/api/server/status": handleServerStatus,
         "/api/server/active-hours": handleServerActiveHours,
+        "/api/player/:id": (req) => handlePlayerLeaderboards(req.params as { id: string }),
         "/api/search/players": handleSearchPlayers,
         "/api/healthz": () => new Response("OK", { status: 200 }),
     },

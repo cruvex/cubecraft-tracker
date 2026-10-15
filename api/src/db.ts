@@ -381,6 +381,35 @@ async function getIgnByUuid(uuid: string): Promise<string | null> {
   return row ? row.player_ign : null;
 }
 
+/** The player's spot on each game's most recent leaderboard; games they're not on are left out. */
+export async function getPlayerLeaderboards(uuid: string) {
+  const ign = await getIgnByUuid(uuid);
+  if (!ign) return null;
+
+  const rows = await Bun.sql`
+    SELECT ls.game_id, ls.timestamp, lr.score, lr.position
+    FROM (
+      SELECT DISTINCT ON (game_id) id, game_id, timestamp
+      FROM leaderboard_snapshots
+      ORDER BY game_id, timestamp DESC
+    ) ls
+    JOIN leaderboard_rows lr ON lr.snapshot_id = ls.id
+    WHERE lr.player = ${uuid}
+    ORDER BY lr.position
+  `;
+
+  return {
+    player: uuid,
+    ign,
+    games: (rows as any[]).map((r) => ({
+      gameId: Number(r.game_id),
+      score: Number(r.score),
+      position: Number(r.position),
+      timestamp: iso(r.timestamp),
+    })),
+  };
+}
+
 export async function getPlayerScores(uuid: string, days = 30, gameId: number) {
   const ign = await getIgnByUuid(uuid);
   if (!ign) return null;
@@ -631,16 +660,18 @@ export async function getUuidsByIgns(igns: string[]): Promise<Map<string, string
   return new Map((res || []).map((r: any) => [r.ign, r.player_uuid]));
 }
 
-export async function getUuidByIgn(ign: string): Promise<string | null> {
-  const res = await Bun.sql`
-    SELECT player_uuid
+/** The newest owner of a name, with the name spelled as stored. */
+export async function getIgnOwner(ign: string): Promise<{ uuid: string; ign: string } | null> {
+  // Escaped because `_` is an ILIKE wildcard and common in names.
+  const pattern = ign.replace(/[\\%_]/g, "\\$&");
+  const [row] = await Bun.sql`
+    SELECT player_uuid, player_ign
     FROM ign_history
-    WHERE player_ign ILIKE ${ign}
+    WHERE player_ign ILIKE ${pattern}
     ORDER BY id DESC
     LIMIT 1
   `;
-  if (!res || res.length === 0) return null;
-  return res[0].player_uuid;
+  return row ? { uuid: row.player_uuid, ign: row.player_ign } : null;
 }
 
 export async function searchPlayers(query: string): Promise<{ uuid: string; ign: string }[]> {
