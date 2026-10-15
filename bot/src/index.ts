@@ -22,6 +22,8 @@ client.on(Events.InteractionCreate, (interaction) => {
 async function handleInteraction(interaction: Interaction) {
   if (interaction.isChatInputCommand()) {
     await commands.get(interaction.commandName)?.execute(interaction);
+  } else if (interaction.isAutocomplete()) {
+    await commands.get(interaction.commandName)?.autocomplete?.(interaction);
   } else if (interaction.isButton()) {
     const [name, ...args] = interaction.customId.split(":");
     await commands.get(name!)?.button?.(interaction, args);
@@ -34,9 +36,7 @@ async function reportError(interaction: Interaction, err: unknown) {
 
   const content = "Something went wrong talking to the tracker. Try again in a bit.";
   try {
-    // A deferred command shows "thinking..." until it's edited.
-    if (interaction.isChatInputCommand() && interaction.deferred) await interaction.editReply({ content });
-    else if (interaction.deferred || interaction.replied) await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
+    if (interaction.replied) await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
     else await interaction.reply({ content, flags: MessageFlags.Ephemeral });
   } catch (replyErr) {
     console.error("Reporting the failure to Discord failed too:", replyErr);

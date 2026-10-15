@@ -1,27 +1,19 @@
 import {
   ActionRowBuilder,
-  ApplicationIntegrationType,
   ButtonBuilder,
   ButtonStyle,
-  ContainerBuilder,
-  InteractionContextType,
   MessageFlags,
-  SeparatorSpacingSize,
-  SlashCommandBuilder,
-  TextDisplayBuilder,
   escapeMarkdown,
   time,
   TimestampStyles,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
-  type InteractionEditReplyOptions,
 } from "discord.js";
 import { getGame, getLeaderboard, type Game, type LeaderboardRow } from "../api";
+import { headerContainer, separator, slashCommand, text, v2Message } from "./shared";
 import type { Command } from "./types";
 
 const pageSize = 15;
-const accentColor = 0x3aa9ff;
-
 const maxChoices = 25;
 
 export const leaderboard: Command = {
@@ -36,17 +28,9 @@ export const leaderboard: Command = {
       console.warn(`/leaderboard offers ${maxChoices} of ${choices.length} games; it needs autocomplete instead`);
     }
 
-    return new SlashCommandBuilder()
-      .setName(this.name)
-      .setDescription("Show a game's current leaderboard")
-      .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
-      .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel)
+    return slashCommand(this.name, "Show a game's current leaderboard")
       .addIntegerOption((option) =>
-        option
-          .setName("game")
-          .setDescription("The game to show")
-          .setRequired(true)
-          .addChoices(choices.slice(0, maxChoices)),
+        option.setName("game").setDescription("The game to show").setRequired(true).addChoices(choices.slice(0, maxChoices)),
       )
       .toJSON();
   },
@@ -69,56 +53,32 @@ async function showPage(interaction: ChatInputCommandInteraction | ButtonInterac
     return;
   }
 
-  if (interaction.isButton()) await interaction.deferUpdate();
-  else await interaction.deferReply();
-  await interaction.editReply(await renderPage(game, page));
+  const message = await renderPage(game, page);
+  if (interaction.isButton()) await interaction.update(message);
+  else await interaction.reply(message);
 }
 
-async function renderPage(game: Game, requestedPage: number): Promise<InteractionEditReplyOptions> {
+async function renderPage(game: Game, requestedPage: number) {
   const board = await getLeaderboard(game.id);
-  const container = new ContainerBuilder().setAccentColor(accentColor);
-
-  if (!board.rows.length) {
-    container.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`No leaderboard data for **${game.displayName}** yet.`),
-    );
-    return v2Message(container);
-  }
+  const title = `${game.displayName} leaderboard`;
+  if (!board.rows.length) return v2Message(headerContainer(title, "No data yet"));
 
   const pageCount = Math.ceil(board.rows.length / pageSize);
-  const page = Math.min(Math.max(Number.isInteger(requestedPage) ? requestedPage : 0, 0), pageCount - 1);
+  const page = Math.min(Math.max(requestedPage, 0), pageCount - 1);
   const rows = board.rows.slice(page * pageSize, (page + 1) * pageSize);
+  const updated = board.timestamp ? ` · Updated ${time(new Date(board.timestamp), TimestampStyles.RelativeTime)}` : "";
 
-  const heading = `## ${game.displayName} leaderboard\n-# Ranked by ${game.scoreType}`;
-  const footer = [
-    `Page ${page + 1}/${pageCount}`,
-    board.timestamp && `Updated ${time(new Date(board.timestamp), TimestampStyles.RelativeTime)}`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  container
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(heading))
-    .addSeparatorComponents((separator) => separator.setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(rows.map(formatRow).join("\n")),
-    )
-    .addSeparatorComponents((separator) => separator.setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ${footer}`));
+  const container = headerContainer(title, `Ranked by ${game.scoreType}`)
+    .addSeparatorComponents(separator())
+    .addTextDisplayComponents(text(rows.map(formatRow).join("\n")))
+    .addSeparatorComponents(separator())
+    .addTextDisplayComponents(text(`-# Page ${page + 1}/${pageCount}${updated}`));
 
   if (pageCount > 1) {
     container.addActionRowComponents(
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`leaderboard:${game.id}:${page - 1}`)
-          .setEmoji("◀️")
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === 0),
-        new ButtonBuilder()
-          .setCustomId(`leaderboard:${game.id}:${page + 1}`)
-          .setEmoji("▶️")
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === pageCount - 1),
+        pageButton(game, page - 1, "◀️", page === 0),
+        pageButton(game, page + 1, "▶️", page === pageCount - 1),
       ),
     );
   }
@@ -126,9 +86,12 @@ async function renderPage(game: Game, requestedPage: number): Promise<Interactio
   return v2Message(container);
 }
 
-// A V2 message can't carry content or embeds.
-function v2Message(container: ContainerBuilder): InteractionEditReplyOptions {
-  return { components: [container], flags: MessageFlags.IsComponentsV2 };
+function pageButton(game: Game, page: number, emoji: string, disabled: boolean) {
+  return new ButtonBuilder()
+    .setCustomId(`leaderboard:${game.id}:${page}`)
+    .setEmoji(emoji)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(disabled);
 }
 
 function formatRow(row: LeaderboardRow) {

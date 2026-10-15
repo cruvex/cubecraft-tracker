@@ -5,9 +5,7 @@ const apiUrl = (process.env.API_URL ?? "http://localhost:4000").replace(/\/+$/, 
 
 const GameSchema = z.object({
   id: z.number(),
-  name: z.string(),
   displayName: z.string(),
-  aliases: z.array(z.string()),
   active: z.boolean(),
   scoreType: z.string(),
 });
@@ -17,7 +15,6 @@ export type Game = z.infer<typeof GameSchema>;
 const LeaderboardSchema = z.object({
   rows: z.array(
     z.object({
-      player: z.string(),
       ign: z.string().nullable(),
       score: z.number(),
       rank: z.number(),
@@ -26,13 +23,30 @@ const LeaderboardSchema = z.object({
   timestamp: z.string().nullable(),
 });
 
-export type Leaderboard = z.infer<typeof LeaderboardSchema>;
-export type LeaderboardRow = Leaderboard["rows"][number];
+export type LeaderboardRow = z.infer<typeof LeaderboardSchema>["rows"][number];
 
-async function get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  const res = await fetch(`${apiUrl}/api${path}`, { signal: AbortSignal.timeout(10_000) });
+const PlayerSchema = z.object({
+  ign: z.string(),
+  matchedIgn: z.string(),
+  games: z.array(
+    z.object({
+      gameId: z.number(),
+      score: z.number(),
+      position: z.number(),
+    }),
+  ),
+});
+
+export type Player = z.infer<typeof PlayerSchema>;
+
+const PlayerSearchSchema = z.array(z.object({ uuid: z.string(), ign: z.string() }));
+
+/** The response body, or null on a 404. */
+async function get(path: string, timeoutMs = 10_000): Promise<unknown> {
+  const res = await fetch(`${apiUrl}/api${path}`, { signal: AbortSignal.timeout(timeoutMs) });
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error(`GET ${path} returned ${res.status}`);
-  return schema.parse(await res.json());
+  return res.json();
 }
 
 // Loaded once at startup, so it always matches the registered command choices.
@@ -40,10 +54,10 @@ let games: Game[] = [];
 
 const loadAttempts = 5;
 
-export async function loadGames(): Promise<Game[]> {
+export async function loadGames() {
   for (let attempt = 1; ; attempt++) {
     try {
-      const loaded = await get("/games", z.array(GameSchema));
+      const loaded = z.array(GameSchema).parse(await get("/games"));
       // The API answers [] when Cubepanion is down.
       if (!loaded.length) throw new Error("The API returned no games");
       games = loaded;
@@ -56,10 +70,20 @@ export async function loadGames(): Promise<Game[]> {
   }
 }
 
-export function getGame(id: number): Game | undefined {
+export function getGame(id: number) {
   return games.find((game) => game.id === id);
 }
 
-export function getLeaderboard(gameId: number): Promise<Leaderboard> {
-  return get(`/games/${gameId}/leaderboard`, LeaderboardSchema);
+export async function getLeaderboard(gameId: number) {
+  return LeaderboardSchema.parse(await get(`/games/${gameId}/leaderboard`));
+}
+
+/** A name resolves to the last player who had it; null when nobody ever did. */
+export async function getPlayer(name: string) {
+  return PlayerSchema.nullable().parse(await get(`/player/${encodeURIComponent(name)}`));
+}
+
+// Short timeout: Discord drops autocomplete answers after 3 seconds.
+export async function searchPlayers(query: string) {
+  return PlayerSearchSchema.parse(await get(`/search/players?q=${encodeURIComponent(query)}`, 2_500));
 }
