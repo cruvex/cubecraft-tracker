@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+import type { Bot } from "mineflayer";
 import { gameMatcher, type Game } from "../games";
 import { connect, kickText } from "./connection";
 import {
@@ -16,6 +18,7 @@ export type Board = { game: Game; readAt: Date; attempts: number } & (
 );
 
 export type ScrapeResult = {
+  loginAttempts: number;
   countsReadAt: Date;
   counts: { gameId: number; players: number }[];
   // Active games the Games menu gave no count for.
@@ -27,18 +30,40 @@ export type ScrapeResult = {
 // The whole Games menu is logged once per process, as what a healthy one looks like.
 let menuLogged = false;
 
+// The wait before each new login. When Mojang's session server is unwell it
+// fails a share of logins, sometimes most, but not all of them, so the next one
+// tends to work, and a failed login only takes a second or two.
+const loginRetryDelaysMs = [5_000, 15_000];
+
+async function logIn(signal: AbortSignal): Promise<{ bot: Bot; attempts: number }> {
+  for (let attempts = 1; ; attempts++) {
+    try {
+      return { bot: await connect(signal), attempts };
+    } catch (err) {
+      signal.throwIfAborted();
+
+      const delayMs = loginRetryDelaysMs[attempts - 1];
+      if (delayMs === undefined) throw err;
+
+      console.warn(`[cubecraft] Login attempt ${attempts} failed, retrying in ${delayMs / 1000}s: ${describe(err)}`);
+      // A shutdown rejects the wait; throwing the signal's reason keeps a timeout reading as one.
+      await sleep(delayMs, undefined, { signal }).catch(() => signal.throwIfAborted());
+    }
+  }
+}
+
 /**
- * One login: read every game's player count off the Games menu, then open the
- * leaderboard of each active game that has one in turn. A board that fails is
- * reported and the rest carry on; only failing to log in or to open the Games
- * menu throws. Losing the connection fails the boards still to read, and keeps
- * what was read before it.
+ * One login, retried if it fails: read every game's player count off the Games
+ * menu, then open the leaderboard of each active game that has one in turn. A
+ * board that fails is reported and the rest carry on; only failing to log in or
+ * to open the Games menu throws. Losing the connection fails the boards still
+ * to read, and keeps what was read before it.
  */
 export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promise<ScrapeResult> {
   const gameOf = gameMatcher(games);
   const isGame = (game: Game) => (name: string) => gameOf(name)?.id === game.id;
 
-  const bot = await connect(signal);
+  const { bot, attempts: loginAttempts } = await logIn(signal);
 
   // Menu waits do not watch the signal, but they cannot outlive the connection.
   const onAbort = () => bot.quit();
@@ -139,7 +164,7 @@ export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promi
     // The abort quits the bot, which reads as a lost connection; the boards it cut short are not this run's result.
     signal.throwIfAborted();
 
-    return { countsReadAt, counts, missingCounts: missing.map((g) => g.id), unmappedGames, boards };
+    return { loginAttempts, countsReadAt, counts, missingCounts: missing.map((g) => g.id), unmappedGames, boards };
   } finally {
     signal.removeEventListener("abort", onAbort);
     bot.removeListener("kicked", onKicked);

@@ -35,6 +35,8 @@ type BoardRun = { gameId: number; attempts: number } & BoardReport;
 
 // What scrape_runs.details holds; a key is there only when it applies.
 type RunDetails = {
+  // Only when above 1, as a retried login would otherwise leave no trace of the failure.
+  loginAttempts?: number;
   boards?: BoardRun[];
   missingCounts?: number[];
   unmapped?: string[];
@@ -55,6 +57,7 @@ async function scrapeAndSave(signal: AbortSignal, details: RunDetails) {
     throw err;
   }
 
+  if (result.loginAttempts > 1) details.loginAttempts = result.loginAttempts;
   if (result.missingCounts.length > 0) details.missingCounts = result.missingCounts;
   if (result.unmappedGames.length > 0) details.unmapped = result.unmappedGames;
 
