@@ -1,0 +1,196 @@
+import { setTimeout as sleep } from "node:timers/promises";
+import type { Bot } from "mineflayer";
+import { gameMatcher, type Game } from "../games";
+import { connect, kickText } from "./connection";
+import {
+  openGamesMenu,
+  readGameCounts,
+  readGameEntries,
+  scrapeLeaderboard,
+  type GameEntry,
+  type ScrapedRow,
+  type Window,
+} from "./menus";
+
+export type Board = { game: Game; readAt: Date; attempts: number } & (
+  | { ok: true; rows: ScrapedRow[]; complete: boolean }
+  | { ok: false; error: string }
+);
+
+export type ScrapeResult = {
+  loginAttempts: number;
+  countsReadAt: Date;
+  counts: { gameId: number; players: number }[];
+  // Active games the Games menu gave no count for.
+  missingCounts: number[];
+  unmappedGames: string[];
+  boards: Board[];
+};
+
+// The whole Games menu is logged once per process, as what a healthy one looks like.
+let menuLogged = false;
+
+// The wait before each new login. When Mojang's session server is unwell it
+// fails a share of logins, sometimes most, but not all of them, so the next one
+// tends to work, and a failed login only takes a second or two.
+const loginRetryDelaysMs = [5_000, 15_000];
+
+async function logIn(signal: AbortSignal): Promise<{ bot: Bot; attempts: number }> {
+  for (let attempts = 1; ; attempts++) {
+    try {
+      return { bot: await connect(signal), attempts };
+    } catch (err) {
+      signal.throwIfAborted();
+
+      const delayMs = loginRetryDelaysMs[attempts - 1];
+      if (delayMs === undefined) throw err;
+
+      console.warn(`[cubecraft] Login attempt ${attempts} failed, retrying in ${delayMs / 1000}s: ${describe(err)}`);
+      // A shutdown rejects the wait; throwing the signal's reason keeps a timeout reading as one.
+      await sleep(delayMs, undefined, { signal }).catch(() => signal.throwIfAborted());
+    }
+  }
+}
+
+/**
+ * One login, retried if it fails: read every game's player count off the Games
+ * menu, then open the leaderboard of each active game that has one in turn. A
+ * board that fails is reported and the rest carry on; only failing to log in or
+ * to open the Games menu throws. Losing the connection fails the boards still
+ * to read, and keeps what was read before it.
+ */
+export async function scrapeCubeCraft(signal: AbortSignal, games: Game[]): Promise<ScrapeResult> {
+  const gameOf = gameMatcher(games);
+  const isGame = (game: Game) => (name: string) => gameOf(name)?.id === game.id;
+
+  const { bot, attempts: loginAttempts } = await logIn(signal);
+
+  // Menu waits do not watch the signal, but they cannot outlive the connection.
+  const onAbort = () => bot.quit();
+  signal.addEventListener("abort", onAbort, { once: true });
+
+  // Only "end" means the connection is gone: an "error" can be a packet that did
+  // not parse, after which the connection carries on. A kick comes just before its end.
+  const connection: { lost: string | null } = { lost: null };
+  let kickReason: string | null = null;
+  const onKicked = (reason: unknown) => {
+    kickReason = kickText(reason);
+  };
+  const onEnd = (reason: string) => {
+    connection.lost = kickReason ? `Kicked: ${kickReason}` : `Disconnected: ${reason}`;
+    console.warn(`[cubecraft] ${connection.lost}`);
+  };
+  bot.once("kicked", onKicked);
+  bot.once("end", onEnd);
+
+  try {
+    let menu: Window;
+    try {
+      menu = await openGamesMenu(bot);
+    } catch (err) {
+      throw connection.lost ? new Error(connection.lost) : err;
+    }
+    const countsReadAt = new Date();
+
+    const counts: ScrapeResult["counts"] = [];
+    const unmappedGames: string[] = [];
+
+    for (const { name, players } of readGameCounts(menu)) {
+      const game = gameOf(name);
+
+      if (!game) {
+        unmappedGames.push(name);
+      } else if (counts.some((c) => c.gameId === game.id)) {
+        console.warn(`[cubecraft] "${name}" is another entry for ${game.displayName}; keeping the first count`);
+      } else {
+        counts.push({ gameId: game.id, players });
+      }
+    }
+
+    const entries = readGameEntries(menu);
+
+    if (!menuLogged) {
+      menuLogged = true;
+      console.log(`[cubecraft] Games menu as first read: ${show(entries.map(({ raw, ...entry }) => entry), 8000)}`);
+    }
+
+    const missing = games.filter((g) => g.active && !counts.some((c) => c.gameId === g.id));
+    for (const game of missing) console.warn(`[cubecraft] ${missingCountNote(game, entries, gameOf)}`);
+
+    // Every board starts from the Games menu; the one read for the counts is
+    // used for the first, the rest open it again.
+    let openMenu: Window | null = menu;
+    const gamesMenu = async () => {
+      const current = openMenu ?? (await openGamesMenu(bot));
+      openMenu = null;
+      return current;
+    };
+
+    const boards: Board[] = [];
+
+    for (const game of games.filter((g) => g.active && g.hasLeaderboard)) {
+      let board: Board | undefined;
+
+      // One retry: a board that fails or stops early has so far always been a
+      // one-off on the server's side.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        signal.throwIfAborted();
+
+        // A board cut short by the connection going says so, not that it stopped early or failed to open.
+        const lost = (): Board => ({ game, readAt: new Date(), attempts: attempt, ok: false, error: connection.lost! });
+
+        if (connection.lost) {
+          board = lost();
+          break;
+        }
+
+        try {
+          const { rows, complete } = await scrapeLeaderboard(bot, await gamesMenu(), isGame(game));
+          board = complete || !connection.lost
+            ? { game, readAt: new Date(), attempts: attempt, ok: true, rows, complete }
+            : lost();
+          if (complete) break;
+        } catch (err) {
+          board = connection.lost ? lost() : { game, readAt: new Date(), attempts: attempt, ok: false, error: describe(err) };
+        }
+
+        if (connection.lost) break;
+        console.warn(`[cubecraft] ${game.displayName} attempt ${attempt} did not read cleanly`);
+      }
+
+      boards.push(board!);
+    }
+
+    // The abort quits the bot, which reads as a lost connection; the boards it cut short are not this run's result.
+    signal.throwIfAborted();
+
+    return { loginAttempts, countsReadAt, counts, missingCounts: missing.map((g) => g.id), unmappedGames, boards };
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    bot.removeListener("kicked", onKicked);
+    bot.removeListener("end", onEnd);
+    bot.quit();
+  }
+}
+
+// Says what the menu held for an active game that gave no count.
+function missingCountNote(game: Game, entries: GameEntry[], gameOf: (name: string) => Game | undefined): string {
+  const own = entries.filter((e) => gameOf(e.name)?.id === game.id);
+
+  if (own.length === 0) {
+    return `${game.displayName} is not in the Games menu, which lists ${entries.map((e) => e.name).join(", ")}`;
+  }
+
+  const counted = entries.find((e) => e.players !== null);
+  return `no player count for ${game.displayName}; its entry reads ${show(own)}; a game with a count reads ${show(counted)}`;
+}
+
+// Capped so one odd item cannot flood the log.
+function show(value: unknown, max = 2000): string {
+  const text = JSON.stringify(value) ?? "nothing";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

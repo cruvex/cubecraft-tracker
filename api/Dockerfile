@@ -12,6 +12,7 @@ COPY api/src src
 # Ships as files because migrate.ts readdir()s them at runtime rather than
 # importing them -- a bundler would leave the .sql behind.
 COPY api/migrations migrations
+COPY api/games.json games.json
 
 USER bun
 CMD ["bun", "src/index.ts"]

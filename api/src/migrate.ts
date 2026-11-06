@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { syncGames } from "./sync-games";
 
 /**
  * Applies un-run migrations in filename order, each in its own transaction.
@@ -47,5 +48,6 @@ export async function migrate() {
 
 if (import.meta.main) {
   await migrate();
+  await syncGames();
   process.exit(0);
 }
