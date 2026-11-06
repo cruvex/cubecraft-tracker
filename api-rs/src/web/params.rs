@@ -1,5 +1,6 @@
 use crate::app::error::{AppError, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
+use chrono_tz::Tz;
 use serde::Deserialize;
 
 /// Query params in request order; a repeated key reads as its first value.
@@ -28,6 +29,14 @@ impl Params {
             return min as i32;
         }
         (value + 0.5).floor().clamp(min, max) as i32
+    }
+
+    /// The `tz` param, with an empty or unknown zone reading as UTC instead of erroring the query.
+    pub fn time_zone(&self) -> String {
+        self.get("tz")
+            .filter(|tz| Tz::from_str_insensitive(tz).is_ok())
+            .unwrap_or("UTC")
+            .to_string()
     }
 
     /// The `month` or `year` param as one period string, if there is one.
