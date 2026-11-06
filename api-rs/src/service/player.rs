@@ -1,6 +1,7 @@
 use crate::app::error::Result;
 use crate::model::player::{PlayerGame, PlayerMatch};
 use deadpool_postgres::Pool;
+use std::collections::HashMap;
 
 /// A looked-up player: their uuid, and the name as stored if the lookup was by name.
 pub struct ResolvedPlayer {
@@ -34,6 +35,35 @@ impl PlayerService {
             uuid: owner.uuid,
             ign: Some(owner.ign),
         }))
+    }
+
+    /// Batch ign to uuid (case-insensitive, latest wins), keyed by lowercased ign; misses are absent.
+    pub async fn uuids_by_igns(&self, igns: &[String]) -> Result<HashMap<String, String>> {
+        if igns.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let con = self.db_pool.get().await?;
+
+        let lowered: Vec<String> = igns.iter().map(|ign| ign.to_lowercase()).collect();
+
+        let stmt = con
+            .prepare_cached(
+                "SELECT DISTINCT ON (LOWER(player_ign))
+                   LOWER(player_ign) AS ign,
+                   player_uuid::text AS player_uuid
+                 FROM ign_history
+                 WHERE LOWER(player_ign) = ANY($1::text[])
+                 ORDER BY LOWER(player_ign), id DESC",
+            )
+            .await?;
+
+        Ok(con
+            .query(&stmt, &[&lowered])
+            .await?
+            .iter()
+            .map(|row| (row.get("ign"), row.get("player_uuid")))
+            .collect())
     }
 
     /// The newest owner of a name, with the name spelled as stored.
