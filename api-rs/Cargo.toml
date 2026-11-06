@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.8.3"
+axum = { version = "0.8.3", features = ["macros"] }
 chrono = { version = "0.4.40", features = ["serde"] }
 chrono-tz = { version = "0.10", features = ["case-insensitive"] }
 config = "0.15.6"

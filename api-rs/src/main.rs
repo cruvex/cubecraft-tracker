@@ -1,5 +1,7 @@
 mod app;
 mod db;
+mod model;
+mod service;
 mod web;
 
 use app::config::AppConfig;
@@ -18,7 +20,9 @@ async fn main() {
     let state = AppState::initialize(db_pool);
 
     let listener_url = format!("{}:{}", config.server.address, config.server.port);
-    let listener = tokio::net::TcpListener::bind(&listener_url).await.expect("Failed to bind");
+    let listener = tokio::net::TcpListener::bind(&listener_url)
+        .await
+        .expect("Failed to bind");
 
     info!("{:<12} - {:?}", "LISTENING", listener.local_addr());
 
@@ -30,7 +34,9 @@ async fn main() {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
 
     #[cfg(unix)]

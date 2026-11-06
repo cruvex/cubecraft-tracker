@@ -13,6 +13,10 @@ pub fn init_tracing() {
             .flatten_event(true)
             .init();
     } else {
-        tracing_subscriber::fmt().with_env_filter(env_filter).with_target(false).with_file(false).init();
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_target(false)
+            .with_file(false)
+            .init();
     }
 }

@@ -24,9 +24,15 @@ pub async fn mw_req_log(req: Request<Body>, next: Next) -> Response {
     let duration_ms = started.elapsed().as_millis() as u64;
 
     if res.status() == StatusCode::INTERNAL_SERVER_ERROR {
-        warn!(request_id, method, uri, status, duration_ms, "handled request");
+        warn!(
+            request_id,
+            method, uri, status, duration_ms, "handled request"
+        );
     } else {
-        info!(request_id, method, uri, status, duration_ms, "handled request");
+        info!(
+            request_id,
+            method, uri, status, duration_ms, "handled request"
+        );
     }
 
     res
