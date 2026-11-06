@@ -22,4 +22,3 @@ debug = false
 lto = "fat"
 codegen-units = 1
 split-debuginfo = "off"
-panic = "abort"

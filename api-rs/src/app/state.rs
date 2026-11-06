@@ -1,4 +1,4 @@
-use crate::service::{GameService, PlayerService, ServerService};
+use crate::service::{GameService, PlayerService, ScoreService, ServerService};
 use axum::extract::FromRef;
 use deadpool_postgres::Pool;
 
@@ -6,6 +6,7 @@ use deadpool_postgres::Pool;
 pub struct AppState {
     pub game: GameService,
     pub player: PlayerService,
+    pub score: ScoreService,
     pub server: ServerService,
 }
 
@@ -14,6 +15,7 @@ impl AppState {
         Self {
             game: GameService::new(db_pool.clone()),
             player: PlayerService::new(db_pool.clone()),
+            score: ScoreService::new(db_pool.clone()),
             server: ServerService::new(db_pool),
         }
     }

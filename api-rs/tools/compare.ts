@@ -16,8 +16,12 @@ async function get(base: string, path: string): Promise<Got> {
   return { status: res.status, type: res.headers.get("content-type")?.split(";")[0] ?? null, body: res.status >= 500 ? null : body };
 }
 
+// Windows clamp to NOW(), which each API read a moment apart.
+const isCloseTimestamp = (a: unknown, b: unknown) =>
+  typeof a === "string" && typeof b === "string" && /^\d{4}-\d\d-\d\dT/.test(a) && Math.abs(Date.parse(a) - Date.parse(b)) < 5000;
+
 function firstDiff(a: unknown, b: unknown, path = ""): string | null {
-  if (a === b) return null;
+  if (a === b || isCloseTimestamp(a, b)) return null;
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return `${path}: length ${a.length} vs ${b.length}`;
     for (let i = 0; i < a.length; i++) {
@@ -104,6 +108,10 @@ for (const q of ["", "?days=7", "?days=0", "?days=9999", "?days=abc", "?days=2.5
   paths.push(`/api/server/active-hours${q}`);
 }
 
+// Differences kept on purpose: Bun passed 1.5 on as a game id and answered with nothing, and it
+// failed days=abc even for a game with no row, where the query now never reaches the bad interval.
+const knownDifferences = [/^\/api\/games\/1\.5\/population/, /^\/api\/games\/999\/leaderboard\?days=abc/];
+
 const selected = paths.filter((p) => !only || new RegExp(only).test(p));
 let same = 0;
 const failures: string[] = [];
@@ -113,7 +121,7 @@ for (let i = 0; i < selected.length; i += 8) {
     selected.slice(i, i + 8).map(async (path) => {
       const [a, b] = await Promise.all([get(oldUrl, path), get(newUrl, path)]);
       const diff = a.status !== b.status ? `status ${a.status} vs ${b.status}` : a.status < 500 && a.type !== b.type ? `content-type ${a.type} vs ${b.type}` : firstDiff(a.body, b.body);
-      if (diff) failures.push(`${path}\n    ${diff}`);
+      if (diff && !knownDifferences.some((known) => known.test(path))) failures.push(`${path}\n    ${diff}`);
       else same++;
     }),
   );
