@@ -1,4 +1,4 @@
-# Build context is the repo root, as migrations and games.json still live in api/.
+# Build context is the repo root, as the migrations still live in api/.
 FROM rust:slim AS build
 
 RUN rustup target add x86_64-unknown-linux-musl && \
@@ -8,7 +8,7 @@ RUN rustup target add x86_64-unknown-linux-musl && \
 WORKDIR /app/api-rs
 
 COPY api/migrations ../api/migrations
-COPY api/games.json ../api/games.json
+COPY api-rs/games.json .
 COPY api-rs/src ./src
 COPY api-rs/Cargo.lock .
 COPY api-rs/Cargo.toml .

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use tracing::{info, warn};
 
-const GAMES_JSON: &str = include_str!("../../../api/games.json");
+const GAMES_JSON: &str = include_str!("../../games.json");
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
