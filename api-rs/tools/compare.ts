@@ -108,9 +108,9 @@ for (const q of ["", "?days=7", "?days=0", "?days=9999", "?days=abc", "?days=2.5
   paths.push(`/api/server/active-hours${q}`);
 }
 
-// Differences kept on purpose: Bun passed 1.5 on as a game id and answered with nothing, and it
+// Differences kept on purpose: 1.5 is not a game id, where Bun passed it on and answered with nothing, and Bun
 // failed days=abc even for a game with no row, where the query now never reaches the bad interval.
-const knownDifferences = [/^\/api\/games\/1\.5\/population/, /^\/api\/games\/999\/leaderboard\?days=abc/];
+const knownDifferences = [/^/api/games/1.5//, /^/api/games/999/leaderboard?days=abc/];
 
 const selected = paths.filter((p) => !only || new RegExp(only).test(p));
 let same = 0;

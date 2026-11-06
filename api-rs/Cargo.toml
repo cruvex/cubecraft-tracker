@@ -15,6 +15,7 @@ tokio = { version = "1.44.2", features = ["rt", "rt-multi-thread", "macros", "si
 tokio-postgres = { version = "0.7.13", features = ["with-chrono-0_4"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+include_dir = "0.7.4"
 uuid = { version = "1.16.0", features = ["v4"] }
 
 [profile.release]

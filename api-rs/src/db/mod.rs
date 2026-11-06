@@ -1,4 +1,9 @@
 pub mod error;
+mod games;
+mod migrations;
+
+pub use games::sync_games;
+pub use migrations::run_migrations;
 
 use crate::app::config::DatabaseConfig;
 use deadpool_postgres::{BuildError, Manager, ManagerConfig, Pool, RecyclingMethod};

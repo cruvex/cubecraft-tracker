@@ -17,6 +17,13 @@ async fn main() {
 
     let db_pool = db::init_db(&config.database).expect("Failed to initialize database pool");
 
+    db::run_migrations(&db_pool)
+        .await
+        .expect("Failed to run database migrations");
+    db::sync_games(&db_pool)
+        .await
+        .expect("Failed to sync games");
+
     let state = AppState::initialize(db_pool);
 
     let listener_url = format!("{}:{}", config.server.address, config.server.port);
