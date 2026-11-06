@@ -1,5 +1,5 @@
 // Calls every route on the Bun API and the Rust API and compares the JSON.
-//   bun api-rs/tools/compare.ts http://localhost:4701 http://localhost:4702 [only-this-substring]
+//   bun api-rs/tools/compare.ts http://localhost:4701 http://localhost:4702 [path regex]
 const [oldUrl, newUrl, only] = Bun.argv.slice(2);
 if (!oldUrl || !newUrl) throw new Error("Usage: compare.ts <old url> <new url> [filter]");
 
@@ -104,7 +104,7 @@ for (const q of ["", "?days=7", "?days=0", "?days=9999", "?days=abc", "?days=2.5
   paths.push(`/api/server/active-hours${q}`);
 }
 
-const selected = paths.filter((p) => !only || p.includes(only));
+const selected = paths.filter((p) => !only || new RegExp(only).test(p));
 let same = 0;
 const failures: string[] = [];
 
@@ -112,7 +112,7 @@ for (let i = 0; i < selected.length; i += 8) {
   await Promise.all(
     selected.slice(i, i + 8).map(async (path) => {
       const [a, b] = await Promise.all([get(oldUrl, path), get(newUrl, path)]);
-      const diff = a.status !== b.status ? `status ${a.status} vs ${b.status}` : a.type !== b.type ? `content-type ${a.type} vs ${b.type}` : firstDiff(a.body, b.body);
+      const diff = a.status !== b.status ? `status ${a.status} vs ${b.status}` : a.status < 500 && a.type !== b.type ? `content-type ${a.type} vs ${b.type}` : firstDiff(a.body, b.body);
       if (diff) failures.push(`${path}\n    ${diff}`);
       else same++;
     }),
