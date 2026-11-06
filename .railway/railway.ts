@@ -82,7 +82,7 @@ export default defineRailway((ctx) => {
   });
 
   const bot = service("bot", {
-    source: github(REPO, { branch: "feat/discord-bot" }),
+    source,
     build: {
       builder: "DOCKERFILE",
       dockerfilePath: "/bot/Dockerfile",
