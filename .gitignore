@@ -6,3 +6,6 @@ dist
 
 # Microsoft token cache from local scraper runs
 .auth/
+
+# Local snapshot from railway config migrate cutover
+.railway/.cac-migration.json
