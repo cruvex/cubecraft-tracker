@@ -32,7 +32,7 @@ const menuTimeoutMs = 10_000;
 const gamesMenuAttemptMs = 3_000;
 const gamesMenuAttempts = 4;
 
-// The boards are 100 deep over 5 pages; this only stops a runaway loop.
+// The boards are 250 deep; this only stops a runaway loop.
 const maxPages = 25;
 
 const isNext: Matcher = (name) => /^next$/i.test(name);

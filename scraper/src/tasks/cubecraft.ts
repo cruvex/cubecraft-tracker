@@ -7,7 +7,7 @@ import { sendReport, type BoardReport } from "../report";
 import type { Task } from "../scheduler";
 
 // Logs in to CubeCraft as a player and reads the numbers straight off its
-// menus: every game's live player count, and every game's top-100 leaderboard.
+// menus: every game's live player count, and every game's leaderboard.
 export const cubecraft: Task = {
   name: "cubecraft",
   schedule: process.env.CUBECRAFT_CRON || "*/5 * * * *",
