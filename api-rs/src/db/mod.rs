@@ -1,5 +1,6 @@
 pub mod error;
 mod games;
+pub mod interval;
 mod migrations;
 
 pub use games::sync_games;

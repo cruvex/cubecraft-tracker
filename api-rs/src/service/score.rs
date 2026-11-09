@@ -1,12 +1,14 @@
 use crate::app::error::Result;
+use crate::db::interval::Days;
 use crate::model::score::{
     CurrentScore, PlayerHistory, PlayerScores, Reading, TopGainer, TopGainerMonth,
 };
-use crate::web::params::{iso, number_text};
-use chrono::{DateTime, Utc};
+use crate::web::params::iso;
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use deadpool_postgres::Pool;
 use std::collections::HashMap;
 use tokio_postgres::Row;
+use tokio_postgres::types::ToSql;
 
 // How far before a month's start a reading still counts as the month's starting score; month coverage uses the same tolerance.
 const CARRY_WINDOW: &str = "3 days";
@@ -14,19 +16,19 @@ const CARRY_WINDOW: &str = "3 days";
 /// The CTE `bounds`, which always takes its one parameter as `$1`.
 pub struct Bounds {
     cte: String,
-    param: String,
+    param: Box<dyn ToSql + Sync + Send>,
 }
 
 impl Bounds {
     /// The last `days` days; only readings inside them count.
     pub fn last_days(days: f64) -> Self {
         Self {
-            cte: "bounds AS MATERIALIZED (
+            cte: "bounds AS (
                     SELECT start, start AS carry_start, CAST('infinity' AS timestamptz) AS stop
-                    FROM (SELECT NOW() - CAST($1::text AS INTERVAL) AS start) s
+                    FROM (SELECT NOW() - $1::interval AS start) s
                   )"
             .to_string(),
-            param: format!("{} days", number_text(days)),
+            param: Box::new(Days(days)),
         }
     }
 
@@ -37,21 +39,33 @@ impl Bounds {
 
         Self {
             cte: format!(
-                "bounds AS MATERIALIZED (
+                "bounds AS (
                    SELECT
                      start_utc AT TIME ZONE 'UTC'                             AS start,
                      (start_utc - INTERVAL '{CARRY_WINDOW}') AT TIME ZONE 'UTC' AS carry_start,
                      (start_utc + INTERVAL '{length}') AT TIME ZONE 'UTC'     AS stop
-                   FROM (SELECT CAST($1::text AS timestamp) AS start_utc) s
+                   FROM (SELECT $1::timestamp AS start_utc) s
                  )"
             ),
-            param: if is_year {
-                format!("{period}-01-01")
-            } else {
-                format!("{period}-01")
-            },
+            param: Box::new(period_start(period)),
         }
     }
+
+    fn param(&self) -> &(dyn ToSql + Sync) {
+        &*self.param as &(dyn ToSql + Sync + Send)
+    }
+}
+
+// The period's format is validated by the time it gets here.
+fn period_start(period: &str) -> NaiveDateTime {
+    let year = period[..4].parse().expect("a validated year");
+    let month = period
+        .get(5..)
+        .map_or(1, |m| m.parse().expect("a validated month"));
+
+    NaiveDate::from_ymd_opt(year, month, 1)
+        .and_then(|date| date.and_hms_opt(0, 0, 0))
+        .expect("a validated period")
 }
 
 // CTE `gains` (after `bounds`): each player's last score minus their last score from before the start, or else their first after it.
@@ -133,7 +147,7 @@ impl ScoreService {
         let stmt = con.prepare_cached(&query).await?;
 
         Ok(con
-            .query(&stmt, &[&bounds.param, &game_id])
+            .query(&stmt, &[bounds.param(), &game_id])
             .await?
             .iter()
             .map(TopGainer::from)
@@ -180,7 +194,9 @@ impl ScoreService {
         );
         let stmt = con.prepare_cached(&query).await?;
 
-        let rows = con.query(&stmt, &[&bounds.param, &game_id, &uuids]).await?;
+        let rows = con
+            .query(&stmt, &[bounds.param(), &game_id, &uuids])
+            .await?;
 
         let mut by_uuid: HashMap<String, Vec<Row>> = HashMap::new();
         for row in rows {
@@ -230,7 +246,7 @@ impl ScoreService {
             );
             let stmt = con.prepare_cached(&query).await?;
 
-            con.query(&stmt, &[&bounds.param, &game_id, &limit])
+            con.query(&stmt, &[bounds.param(), &game_id, &limit])
                 .await?
                 .iter()
                 .map(|row| row.get("uuid"))
@@ -347,7 +363,7 @@ impl ScoreService {
             .await?;
 
         let periods = con
-            .query(&periods, &[&bounds.param, &game_id, &uuid])
+            .query(&periods, &[bounds.param(), &game_id, &uuid])
             .await?;
         let latest = con.query_opt(&latest, &[&game_id, &uuid]).await?;
 

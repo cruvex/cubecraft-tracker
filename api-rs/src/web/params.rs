@@ -85,15 +85,6 @@ pub fn parse_number(value: &str) -> f64 {
     }
 }
 
-/// A number as text for an interval: Postgres rejects NaN, which is what a bad `days` should do.
-pub fn number_text(value: f64) -> String {
-    if value.is_finite() && value.fract() == 0.0 {
-        format!("{value:.0}")
-    } else {
-        value.to_string()
-    }
-}
-
 /// The `gameId` path param: not a number is a 400, and a number that is not an id fails as the query would.
 pub fn game_id(raw: &str) -> Result<i32> {
     let id = parse_number(raw);

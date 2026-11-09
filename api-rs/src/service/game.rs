@@ -1,8 +1,9 @@
 use crate::app::error::Result;
+use crate::db::interval::Days;
 use crate::model::game::Game;
 use crate::model::leaderboard::{DepartedPlayer, Leaderboard, LeaderboardRow};
 use crate::model::population::{GamePopulation, GameReading};
-use crate::web::params::{iso, number_text};
+use crate::web::params::iso;
 use chrono::{DateTime, Utc};
 use deadpool_postgres::Pool;
 
@@ -40,8 +41,6 @@ impl GameService {
     pub async fn leaderboard(&self, game_id: i32, compare_days: f64) -> Result<Leaderboard> {
         let con = self.db_pool.get().await?;
 
-        let interval = format!("{} days", number_text(compare_days));
-
         // The comparison board is the latest one at least `compare_days` old: the board only changes when a period starts.
         let times = con
             .prepare_cached(
@@ -50,14 +49,17 @@ impl GameService {
                    (
                      SELECT MAX(first_seen) FROM player_scores
                      WHERE game_id = $1::int
-                       AND first_seen <= last_read_at - CAST($2::text AS INTERVAL)
+                       AND first_seen <= last_read_at - $2::interval
                    ) AS past_at
                  FROM games
                  WHERE id = $1::int",
             )
             .await?;
 
-        let Some(times) = con.query_opt(&times, &[&game_id, &interval]).await? else {
+        let Some(times) = con
+            .query_opt(&times, &[&game_id, &Days(compare_days)])
+            .await?
+        else {
             return Ok(Leaderboard::default());
         };
 
