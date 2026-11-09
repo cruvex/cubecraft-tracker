@@ -126,20 +126,12 @@ impl ScoreService {
         let con = self.db_pool.get().await?;
 
         let query = format!(
-            "WITH {}, {GAINS_CTE},
-             player_igns AS (
-               SELECT DISTINCT ON (player_uuid)
-                 player_uuid,
-                 player_ign
-               FROM ign_history
-               ORDER BY player_uuid, id DESC
-             )
+            "WITH {}, {GAINS_CTE}
              SELECT
                g.player::text AS uuid,
-               pi.player_ign AS ign,
+               (SELECT player_ign FROM ign_history i WHERE i.player_uuid = g.player ORDER BY i.id DESC LIMIT 1) AS ign,
                g.score_gain
              FROM gains g
-             LEFT JOIN player_igns pi ON g.player = pi.player_uuid
              WHERE g.score_gain > 0
              ORDER BY g.score_gain DESC",
             bounds.cte
@@ -173,6 +165,7 @@ impl ScoreService {
              player_igns AS (
                SELECT DISTINCT ON (player_uuid) player_uuid, player_ign
                FROM ign_history
+               WHERE player_uuid = ANY($3::text[]::uuid[])
                ORDER BY player_uuid, id DESC
              )
              SELECT

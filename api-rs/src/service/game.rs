@@ -89,14 +89,14 @@ impl GameService {
                    cur.position                            AS current_position,
                    past.score                              AS past_score,
                    past.position                           AS past_position,
-                   ih.player_ign                           AS ign
+                   (
+                     SELECT player_ign FROM ign_history i
+                     WHERE i.player_uuid = COALESCE(cur.player, past.player)
+                     ORDER BY i.id DESC
+                     LIMIT 1
+                   )                                       AS ign
                  FROM cur
                  FULL OUTER JOIN past ON cur.player = past.player
-                 LEFT JOIN (
-                   SELECT DISTINCT ON (player_uuid) player_uuid, player_ign
-                   FROM ign_history
-                   ORDER BY player_uuid, id DESC
-                 ) ih ON ih.player_uuid = COALESCE(cur.player, past.player)
                  ORDER BY cur.position NULLS LAST, past.position",
             )
             .await?;
