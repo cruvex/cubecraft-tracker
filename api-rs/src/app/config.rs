@@ -24,7 +24,7 @@ impl AppConfig {
         Config::builder()
             .set_default("server.address", "::")
             .and_then(|b| b.set_default("server.port", 8080))
-            .and_then(|b| b.set_default("database.max_pool_size", 3))
+            .and_then(|b| b.set_default("database.max_pool_size", 10))
             .expect("Failed to set config defaults")
             .add_source(
                 Environment::default()

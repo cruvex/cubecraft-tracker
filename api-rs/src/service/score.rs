@@ -21,7 +21,7 @@ impl Bounds {
     /// The last `days` days; only readings inside them count.
     pub fn last_days(days: f64) -> Self {
         Self {
-            cte: "bounds AS (
+            cte: "bounds AS MATERIALIZED (
                     SELECT start, start AS carry_start, CAST('infinity' AS timestamptz) AS stop
                     FROM (SELECT NOW() - CAST($1::text AS INTERVAL) AS start) s
                   )"
@@ -37,7 +37,7 @@ impl Bounds {
 
         Self {
             cte: format!(
-                "bounds AS (
+                "bounds AS MATERIALIZED (
                    SELECT
                      start_utc AT TIME ZONE 'UTC'                             AS start,
                      (start_utc - INTERVAL '{CARRY_WINDOW}') AT TIME ZONE 'UTC' AS carry_start,
