@@ -1,5 +1,5 @@
 // Calls every route on the Bun API and the Rust API and compares the JSON.
-//   bun api-rs/tools/compare.ts http://localhost:4701 http://localhost:4702 [path regex]
+//   bun api/tools/compare.ts http://localhost:4701 http://localhost:4702 [path regex]
 const [oldUrl, newUrl, only] = Bun.argv.slice(2);
 if (!oldUrl || !newUrl) throw new Error("Usage: compare.ts <old url> <new url> [filter]");
 

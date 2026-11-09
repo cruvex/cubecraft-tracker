@@ -1,18 +1,23 @@
-# Build context is the repo root, shared by every service; nothing outside api/ is copied here.
-FROM oven/bun:1-alpine
-WORKDIR /app
+FROM rust:slim AS build
 
-# api/ is flattened onto /app, so package.json's own scripts resolve and
-# migrate.ts finds ../migrations relative to /app/src.
-COPY api/package.json api/bun.lock ./
-RUN bun install --frozen-lockfile --production
+RUN rustup target add x86_64-unknown-linux-musl && \
+    apt update && \
+    apt install -y musl-tools musl-dev
 
-COPY api/src src
+WORKDIR /app/api
 
-# Ships as files because migrate.ts readdir()s them at runtime rather than
-# importing them -- a bundler would leave the .sql behind.
-COPY api/migrations migrations
-COPY api/games.json games.json
+COPY api/migrations ./migrations
+COPY api/games.json .
+COPY api/src ./src
+COPY api/Cargo.lock .
+COPY api/Cargo.toml .
 
-USER bun
-CMD ["bun", "src/index.ts"]
+RUN cargo build --target x86_64-unknown-linux-musl --release
+
+FROM scratch
+
+COPY --from=build /app/api/target/x86_64-unknown-linux-musl/release/cubecraft-api /app
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app"]

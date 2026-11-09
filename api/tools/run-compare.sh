@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the Rust API, runs it on 4702 and compares it with a Bun API already running on 4701.
-#   DATABASE__URL=postgres://... api-rs/tools/run-compare.sh [path regex]
+#   DATABASE__URL=postgres://... api/tools/run-compare.sh [path regex]
 cd "$(dirname "$0")/.." || exit 1
 cargo build 2>&1 | grep -E '^(warning: unused|error|warning: `)|Finished' | tail -12
 [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1

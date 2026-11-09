@@ -5,8 +5,7 @@
   "scripts": {
     "dashboard:build": "bun run --cwd dashboard build",
     "dashboard:dev": "bun run --cwd dashboard dev",
-    "api:dev": "bun --hot api/src/index.ts",
-    "api:migrate": "bun api/src/migrate.ts",
+    "api:dev": "cd api && cargo run",
     "bot:dev": "bun --watch bot/src/index.ts",
     "db:refresh": "bun scripts/refresh-db.ts",
     "iac:plan": "railway config plan",

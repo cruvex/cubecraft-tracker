@@ -35,11 +35,9 @@ export default defineRailway((ctx) => {
       dockerfilePath: "/api/Dockerfile",
       watchPatterns: ["/api/**"],
     },
-    preDeploy: "bun run migrate",
-    start: "bun run start",
     healthcheck: "/api/healthz",
     env: {
-      DATABASE_URL: db.env.DATABASE_URL,
+      DATABASE__URL: db.env.DATABASE_URL,
     },
   });
 

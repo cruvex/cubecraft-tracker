@@ -5,7 +5,7 @@ use std::error::Error;
 use tracing::info;
 
 // Embedded because the image is a single binary with no filesystem to read them from.
-static MIGRATIONS: Dir = include_dir!("$CARGO_MANIFEST_DIR/../api/migrations");
+static MIGRATIONS: Dir = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 
 /// Applies un-run migrations in filename order, each in its own transaction.
 /// Only the filename is tracked, so never edit an applied migration: add a new numbered file instead.
