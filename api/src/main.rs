@@ -6,8 +6,10 @@ mod web;
 
 use app::config::AppConfig;
 use app::state::AppState;
+use service::MojangSessionClient;
+use std::time::Duration;
 use tokio::signal;
-use tracing::info;
+use tracing::{info, warn};
 
 #[tokio::main]
 async fn main() {
@@ -24,7 +26,12 @@ async fn main() {
         .await
         .expect("Failed to sync games");
 
-    let state = AppState::initialize(db_pool);
+    let state = AppState::initialize(
+        db_pool,
+        MojangSessionClient::new(&config.mojang.has_joined_url),
+    );
+
+    spawn_auth_sweep(state.clone());
 
     let listener_url = format!("{}:{}", config.server.address, config.server.port);
     let listener = tokio::net::TcpListener::bind(&listener_url)
@@ -37,6 +44,23 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("Failed to start server");
+}
+
+/// Expired challenges and tokens are already refused by every query; this only keeps the tables small.
+fn spawn_auth_sweep(state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
+        loop {
+            interval.tick().await;
+            match state.auth.sweep().await {
+                Ok((0, 0)) => {}
+                Ok((challenges, tokens)) => {
+                    info!(challenges, tokens, "swept expired auth rows")
+                }
+                Err(err) => warn!("auth sweep failed: {err:?}"),
+            }
+        }
+    });
 }
 
 async fn shutdown_signal() {

@@ -3,12 +3,14 @@ use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::get;
 
+pub mod auth;
 pub mod middleware;
 pub mod params;
 pub mod routes;
 
 pub fn app_router(state: AppState) -> Router {
     Router::new()
+        .merge(routes::auth::routes())
         .merge(routes::game::routes())
         .merge(routes::player::routes())
         .merge(routes::server::routes())

@@ -10,7 +10,8 @@ const RAILWAY_REQUEST_ID_HEADER: &str = "x-railway-request-id";
 
 pub async fn mw_req_log(req: Request<Body>, next: Next) -> Response {
     let method = req.method().to_string();
-    let uri = req.uri().to_string();
+    // Path only: query strings can carry secrets, such as a dashboard link token.
+    let uri = req.uri().path().to_string();
     let request_id = req
         .headers()
         .get(RAILWAY_REQUEST_ID_HEADER)
